@@ -33,21 +33,35 @@ state/       generated; what the panel reads
 the `sda1` that `/mnt/projects` lives on. It reports uncommitted files
 explicitly, because those are exactly what a mirror does not protect.
 
-## Not built yet
+## The model
 
-The point of this directory is the seat, not the scripts. What is still missing,
-in the order it should arrive:
+[`GRAPH.md`](GRAPH.md) is the plan of record: judgment lives in nodes,
+transitions are deterministic scripts, and **a node has no way to advance except
+across an edge.** It also explains why `./verify`'s three-way exit code is
+already an edge, and why the autonomy level of a factory is just a question of
+which nodes on its path are human-occupied.
 
-- **`CHARTER.md` in each factory** — what the company is, its north-star metric,
-  what is out of scope. Owned by Nikita; agents may only file a charter question
-  against it.
-- **beads in all three** — today only ai-ih-coach has a real backlog. Acceptance
-  criteria written before code is the thing that makes work dispatchable.
-- **`cp status` / `cp brief`** — read-only across all three: ready work, WIP,
-  gate state, the decision queue. Visibility before automation.
-- **The shift** — Groomer, Reviewer, Builder, Sweeper as headless `claude -p`
-  runs, in that order. The judge gets built before the author is scaled.
+## The backlog
+
+`.beads/` holds the program backlog — the operating model across all four repos.
+Feature work for a factory lives in that factory's own tracker. The line: if it
+changes how work moves, it belongs here; if it changes what the product does, it
+belongs there.
+
+```
+br ready                 what could be started now
+br dep tree cp-execution-graph-yt9    the whole program, as a tree
+br blocked               what is waiting, and on what
+```
+
+Durability: `origin` is `github.com/nikita-leonov/control-plane`, for storage
+only — nothing is validated remotely. `~/git-mirrors/sync` mirrors the factory
+repos onto the NVMe root disk, away from the `sda1` that `/mnt/projects` lives
+on, and reports uncommitted files explicitly because those are exactly what a
+mirror does not protect. control-plane is not in that set yet
+(`cp-mirror-control-plane-2xz`).
 
 The rule that keeps this a CEO tool rather than another inbox: **it surfaces
-decisions, never diffs.** If a diff gets opened that the panel did not flag,
-that is a bug in the panel, and it gets filed as one.
+decisions, never diffs.** The decision queue is the set of tokens parked on human
+nodes. If a diff gets opened that the panel did not flag, that is a bug in the
+panel, and it gets filed as one.
