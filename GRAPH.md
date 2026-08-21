@@ -270,7 +270,26 @@ Nothing else differs. That single inserted node is the whole of "finance always
 waits for me" — real money, real tax lots, real wash-sale windows — and it is a
 graph fact rather than a policy sentence somebody has to remember.
 
-Graph definition format: `cp-graph-def-ans`. Runner: `cp-runner-3k1`.
+The definition lives in `nodes/graph.json` and is validated by
+`tools/check-graph.py` on every `./verify`: every route must land on something
+real, every verdict must select an edge that exists, no name may mean two things,
+and every position must be able to reach a terminal. A route to a node that does
+not exist is a token deadlocking halfway through a factory, at which point the
+useful information is gone.
+
+`bin/cp-run` walks it. It persists token state on every crossing, resumes from a
+parked token, and never invokes a model to route — a test asserts that over the
+edge scripts rather than trusting the claim. **Live node launch is refused**
+until the isolation contract and tool policy exist: a runner that launches nodes
+with ambient tools and no manifest is the failure this whole design prevents, and
+one that does it quietly is worse than one that will not start
+(`cp-runner-3k1`, `cp-graph-def-ans`).
+
+```
+bin/cp-run <factory> <token> --dry-run --scenario happy
+bin/cp-run --resume <token>              # prints the question
+bin/cp-run --resume <token> --answer yes
+```
 
 ## Autonomy is a property of the graph
 
@@ -371,14 +390,25 @@ The join that is actually missing is between the work graph and the code graph.
 descriptions, so the Reviewer cannot mechanically check that a diff touched what
 the issue claimed it would (`cp-files-edge-e4n`).
 
+## Seeing it
+
+`bin/cp status` is the board; `bin/cp serve` is the same thing in a browser, with
+the graph drawn from the definition rather than hand-placed, so the picture
+cannot drift from the thing it describes. Tokens light up the vertex they are
+sitting on; selecting one highlights its path and lists every crossing; selecting
+a node or an edge shows every token that has ever crossed it.
+
+The decision queue is every parked token, across all factories, each rendering
+its own question and options. That is what makes *surfaces decisions, never
+diffs* a thing you can look at rather than a thing to remember.
+
 ## What is not in the model yet
 
 Everything above describes the frame. Almost none of it runs:
 
-- **Nothing crosses edges.** There is no runner; a human does the next thing,
-  which is precisely the bottleneck being removed (`cp-runner-3k1`).
-- **The graph is not declared anywhere** but in this prose
-  (`cp-graph-def-ans`).
+- **No node runs for real.** The runner walks the graph and records every
+  crossing, but only against recorded results — live node launch waits on
+  isolation (`cp-runner-3k1`).
 - **No node exists.** Reviewer first, deliberately — scaling the author before
   the judge exists is how a factory produces volume nobody can check
   (`cp-reviewer-node-hq3`, then `cp-builder-node-0va`, `cp-groomer-node-pwa`,

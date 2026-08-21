@@ -1,0 +1,10 @@
+{
+  "_comment": "Builder works, gate passes, Reviewer approves, it merges. The path that should be boring.",
+  "verdicts": {
+    "builder#0": {"node":"builder","token":"cp-demo-1","verdict":"done","attempt":1,
+      "payload":{"files":["bin/cp-run"],
+                 "commits":[{"message":"Add the runner","files":["bin/cp-run"]}]}},
+    "reviewer#0": {"node":"reviewer","token":"cp-demo-1","verdict":"approve","attempt":1,
+      "payload":{"criteria_met":["crosses edges without a model","resumes after a kill"]}}
+  }
+}

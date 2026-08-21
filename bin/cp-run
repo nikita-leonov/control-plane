@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""cp-run — move a token across the graph.
+
+The runner is the only thing that crosses edges, and it never asks a model where
+to go. A node returns a verdict, node-types.json says which edge that verdict
+selects, the edge script runs, and its exit code names the next node. Every
+crossing is appended to the transition log before the next one starts, so a
+kill -9 resumes from the last crossing rather than the beginning.
+
+  cp-run <factory> <token> --dry-run --scenario happy
+  cp-run --resume <token> --answer keep
+  cp-run --show <token>
+
+Live mode is refused on purpose: launching real nodes without the isolation
+contract and tool policy would be exactly the thing the graph exists to prevent.
+
+Exit 0 the token reached a terminal or parked cleanly, 1 the run failed,
+2 cp-run itself is misconfigured.
+"""
+
+import argparse
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+PROJECTS = pathlib.Path("/mnt/projects")
+STATE = ROOT / "state"
+TOKENS = STATE / "tokens"
+LOG = STATE / "transitions.ndjson"
+
+
+def die(msg, code=2):
+    print(f"cp-run: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def load(name):
+    return json.loads((ROOT / "nodes" / name).read_text())
+
+
+def now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def record(rec):
+    """Append before the next crossing starts. The log is the provenance graph;
+    if it lags the runner it stops being evidence."""
+    STATE.mkdir(exist_ok=True)
+    with open(LOG, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def save(tok):
+    TOKENS.mkdir(parents=True, exist_ok=True)
+    tok["updated"] = now()
+    p = TOKENS / f"{tok['token']}.json"
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(tok, indent=2) + "\n")
+    tmp.replace(p)                      # atomic: a torn token file is unresumable
+    return tok
+
+
+def read_token(tid):
+    p = TOKENS / f"{tid}.json"
+    if not p.exists():
+        die(f"no token {tid!r} — nothing to resume", 1)
+    return json.loads(p.read_text())
+
+
+def run_node(tok, node, graph, types, args):
+    """Get a verdict out of a node.
+
+    Live mode launches a headless agent under a tool policy. It is refused until
+    that policy exists, because a node with ambient tools and no manifest is the
+    failure the whole design is built to prevent — and a runner that quietly does
+    it anyway is worse than one that will not start.
+    """
+    if not args.dry_run:
+        die("live nodes need the isolation contract and tool policy first "
+            "(cp-node-isolation-i7d, cp-node-tool-policy-wyi). "
+            "Use --dry-run.", 1)
+
+    scen = json.loads((ROOT / "tests" / "fixtures" / f"run-{args.scenario}.json").read_text())
+    key = f"{node}#{tok['seen'].get(node, 0)}"
+    if key not in scen["verdicts"]:
+        die(f"scenario {args.scenario!r} has no verdict for {key}", 2)
+    tok["seen"][node] = tok["seen"].get(node, 0) + 1
+    env = scen["verdicts"][key]
+
+    # A verdict is only a verdict if it validates. Same gate a live node passes.
+    p = STATE / "verdict.json"
+    STATE.mkdir(exist_ok=True)
+    p.write_text(json.dumps(env))
+    r = subprocess.run([str(ROOT / "bin" / "cp-verdict"), "check", str(p)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        die(f"node {node} produced an invalid result:\n{r.stderr}", 1)
+    return env
+
+
+def cross(edge_name, edge, tok, factory, args):
+    """Run an edge script and return its exit code. No model involved, ever."""
+    cwd = PROJECTS / factory if edge.get("cwd") == "factory" else ROOT
+    cmd = list(edge["run"])
+    if edge.get("cwd") != "factory":
+        cmd[0] = str(ROOT / cmd[0])
+    if args.dry_run and edge.get("cwd") == "factory":
+        cmd = [str(ROOT / "bin" / "edges" / "noop")]      # do not touch a real repo
+        cwd = ROOT
+    t0 = time.time()
+    try:
+        r = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=600,
+                           env={**os.environ, "CP_TOKEN": tok["token"], "CP_FACTORY": factory,
+                                "CP_EDGE": edge_name})
+        rc = r.returncode
+    except FileNotFoundError:
+        die(f"edge {edge_name!r} has no script at {cmd[0]}", 2)
+    except subprocess.TimeoutExpired:
+        rc = 1
+    return rc, int((time.time() - t0) * 1000)
+
+
+def advance(tok, graph, types, args):
+    """Walk until the token reaches a terminal or parks.
+
+    A position is a node, an edge, or a terminal. Several deterministic steps may
+    sit between two judgment points — committing a plan is not a decision, so it
+    is an edge, but it still has to happen before the Reviewer sees anything.
+    """
+    factory = tok["factory"]
+
+    for _ in range(200):                      # a graph that cannot settle is a bug
+        pos = tok["node"]
+
+        if pos in graph["terminals"]:
+            tok["status"] = graph["terminals"][pos]["kind"]
+            return save(tok)
+
+        if pos in graph["edges"]:             # mid-transition, keep going
+            do_edge(tok, pos, graph, factory, args, tok.get("last_node", pos),
+                    tok.get("last_verdict", "-"))
+            if tok["status"] == "parked":
+                return save(tok)
+            continue
+
+        spec = types["nodes"].get(pos)
+        if not spec:
+            die(f"position {pos!r} is neither a node, an edge, nor a terminal", 2)
+
+        if spec.get("verdicts_from_question"):
+            tok["status"] = "parked"
+            return save(tok)
+
+        env = run_node(tok, pos, graph, types, args)
+        verdict = env["verdict"]
+        rule = spec["verdicts"][verdict]
+        tok["last_node"], tok["last_verdict"] = pos, verdict
+
+        if rule.get("parks"):
+            record({"ts": now(), "token": tok["token"], "factory": factory, "from": pos,
+                    "verdict": verdict, "edge": None, "exit": None, "to": "@park", "ms": 0})
+            tok.update(status="parked", node="@park",
+                       question=env.get("question"), parked_from=pos)
+            return save(tok)
+
+        do_edge(tok, rule["edge"], graph, factory, args, pos, verdict)
+        if tok["status"] == "parked":
+            return save(tok)
+
+    die("graph did not settle in 200 steps", 2)
+
+
+def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
+    edge = graph["edges"].get(edge_name)
+    if not edge:
+        die(f"no edge {edge_name!r} in graph.json", 2)
+
+    # The whole of "this factory waits for me": one inserted node. Checked here
+    # rather than where a verdict picks an edge, because an edge is just as often
+    # reached by another edge's route — and merge is exactly such an edge.
+    if edge_name in set(graph["factories"].get(factory, {}).get("human_before", [])) \
+            and not tok.pop("human_cleared_" + edge_name, None):
+        record({"ts": now(), "token": tok["token"], "factory": factory, "from": from_node,
+                "verdict": verdict, "edge": None, "exit": None, "to": "@park",
+                "ms": 0, "why": f"human_before {edge_name}"})
+        tok.update(status="parked", node="@park", parked_from=from_node, question={
+            "asks": f"{tok['token']} is green and reviewed. Cross `{edge_name}`?",
+            "options": [
+                {"value": "yes", "means": f"run the {edge_name} edge", "edge": edge_name},
+                {"value": "hold", "means": "leave it parked for now", "edge": "@park"}]})
+        return None, 0
+
+    budget = edge.get("budget")
+    if budget:
+        n = tok["attempts"].get(edge_name, 0) + 1
+        tok["attempts"][edge_name] = n
+        if n > budget:
+            # Exhaustion is an edge to a human node, not an exception.
+            record({"ts": now(), "token": tok["token"], "factory": factory, "from": from_node,
+                    "verdict": verdict, "edge": edge_name, "exit": None, "to": "@park",
+                    "ms": 0, "why": f"budget {budget} exhausted"})
+            tok["status"] = "parked"
+            tok["node"] = "@park"
+            tok["question"] = {
+                "asks": f"{tok['token']} has failed `{edge_name}` {budget} times. What now?",
+                "options": [
+                    {"value": "retry", "means": "reset the budget and try again", "edge": edge_name},
+                    {"value": "drop", "means": "stop working this token", "edge": "@park"},
+                ],
+            }
+            return None, 0
+
+    rc, ms = cross(edge_name, edge, tok, factory, args)
+    to = edge["routes"].get(str(rc))
+    if to is None:
+        # No edge matched. Kept as a visible terminal on purpose: a model router
+        # would have improvised past the gap and hidden it.
+        record({"ts": now(), "token": tok["token"], "factory": factory, "from": from_node,
+                "verdict": verdict, "edge": edge_name, "exit": rc, "to": "@park", "ms": ms,
+                "why": f"no route for exit {rc}"})
+        tok["status"] = "parked"
+        tok["node"] = "@park"
+        tok["question"] = {
+            "asks": f"Edge `{edge_name}` exited {rc}, which the graph has no route for.",
+            "options": [
+                {"value": "route", "means": "add the missing route to graph.json", "edge": edge_name},
+                {"value": "drop", "means": "stop working this token", "edge": "@park"},
+            ],
+        }
+        return rc, ms
+
+    record({"ts": now(), "token": tok["token"], "factory": factory, "from": from_node,
+            "verdict": verdict, "edge": edge_name, "exit": rc, "to": to, "ms": ms})
+    tok["node"] = to
+    save(tok)
+    return rc, ms
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="cp-run", description=__doc__.split("\n")[0])
+    ap.add_argument("factory", nargs="?")
+    ap.add_argument("token", nargs="?")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--scenario", default="happy")
+    ap.add_argument("--resume")
+    ap.add_argument("--answer")
+    ap.add_argument("--show")
+    a = ap.parse_args()
+
+    graph, types = load("graph.json"), load("node-types.json")
+
+    if a.show:
+        print(json.dumps(read_token(a.show), indent=2))
+        return 0
+
+    if a.resume:
+        tok = read_token(a.resume)
+        a.dry_run = tok.get("dry_run", False)          # the mode belongs to the
+        a.scenario = tok.get("scenario") or a.scenario # token, not to this invocation
+        if tok["status"] != "parked":
+            die(f"{a.resume} is {tok['status']}, not parked", 1)
+        q = tok.get("question") or {}
+        opts = {o["value"]: o for o in q.get("options", [])}
+        if a.answer not in opts:
+            print(f"  {q.get('asks','(no question)')}\n")
+            for v, o in opts.items():
+                print(f"    {v:<8} {o['means']}   → {o['edge']}")
+            return 0 if not a.answer else 1
+        chosen = opts[a.answer]
+        record({"ts": now(), "token": tok["token"], "factory": tok["factory"], "from": "@park",
+                "verdict": a.answer, "edge": None, "exit": None,
+                "to": chosen["edge"], "ms": 0, "actor": "human"})
+        if chosen["edge"] == "@park":
+            return 0
+        tok["status"] = "running"
+        tok.pop("question", None)
+        if chosen["edge"] in graph["edges"]:
+            tok["attempts"].pop(chosen["edge"], None)
+            tok["human_cleared_" + chosen["edge"]] = True   # consumed on the next crossing
+            tok["node"] = tok.get("parked_from") or graph["entry"]
+            do_edge(tok, chosen["edge"], graph, tok["factory"], a, "@park", a.answer)
+        advance(tok, graph, types, a)
+        print(f"  {tok['token']}: {tok['status']} at {tok['node']}")
+        return 0
+
+    if not (a.factory and a.token):
+        ap.print_help()
+        return 2
+    if a.factory not in graph["factories"]:
+        die(f"{a.factory!r} is not a factory in graph.json", 2)
+
+    tok = {"token": a.token, "factory": a.factory, "node": graph["entry"],
+           "status": "running", "attempts": {}, "seen": {},
+           "started": now(), "updated": now(), "dry_run": a.dry_run,
+           "scenario": a.scenario if a.dry_run else None}
+    save(tok)
+    advance(tok, graph, types, a)
+    print(f"  {tok['token']}: {tok['status']} at {tok['node']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,117 @@
+{
+  "_comment": "The graph. node-types.json says which edge a verdict selects; this says where an edge leads. A route target is a node, another edge, or a terminal \u2014 several deterministic steps can sit between two judgment points. Edge and node names share one namespace and may not collide, which the validator enforces.",
+  "entry": "builder",
+  "edges": {
+    "verify-fast": {
+      "run": [
+        "./verify",
+        "--fast"
+      ],
+      "cwd": "factory",
+      "routes": {
+        "0": "commit",
+        "1": "to-repair",
+        "2": "@park"
+      },
+      "_note": "exit 2 is the gate itself being broken. It never routes to repair \u2014 a repair node handed an unrunnable gate would 'fix' code that was never the problem."
+    },
+    "commit": {
+      "run": [
+        "bin/edges/commit"
+      ],
+      "cwd": "control-plane",
+      "routes": {
+        "0": "reviewer",
+        "1": "@park"
+      },
+      "_note": "The chunking plan is judgment and came from the Builder. Executing it is not, so it happens here."
+    },
+    "verify-full": {
+      "run": [
+        "./verify"
+      ],
+      "cwd": "factory",
+      "routes": {
+        "0": "merge",
+        "1": "to-repair",
+        "2": "@park"
+      }
+    },
+    "to-repair": {
+      "run": [
+        "bin/edges/noop"
+      ],
+      "cwd": "control-plane",
+      "budget": 3,
+      "routes": {
+        "0": "repair"
+      },
+      "_note": "Attempt count is edge state carried in the token. Exhausting the budget routes to a human node \u2014 an edge, not an exception."
+    },
+    "merge": {
+      "run": [
+        "bin/edges/merge"
+      ],
+      "cwd": "control-plane",
+      "routes": {
+        "0": "close",
+        "1": "@park"
+      }
+    },
+    "close": {
+      "run": [
+        "bin/edges/close"
+      ],
+      "cwd": "control-plane",
+      "routes": {
+        "0": "@done",
+        "1": "@park"
+      }
+    },
+    "ready": {
+      "run": [
+        "bin/edges/noop"
+      ],
+      "cwd": "control-plane",
+      "routes": {
+        "0": "@done"
+      }
+    },
+    "done": {
+      "run": [
+        "bin/edges/noop"
+      ],
+      "cwd": "control-plane",
+      "routes": {
+        "0": "@done"
+      }
+    }
+  },
+  "terminals": {
+    "@done": {
+      "kind": "done",
+      "label": "merged"
+    },
+    "@park": {
+      "kind": "human",
+      "label": "waiting on Nikita"
+    }
+  },
+  "factories": {
+    "control-plane": {
+      "human_before": []
+    },
+    "faceoff-finder": {
+      "human_before": []
+    },
+    "ai-ih-coach": {
+      "human_before": []
+    },
+    "finance-c-and-c": {
+      "human_before": [
+        "merge"
+      ],
+      "_note": "The whole of 'finance always waits for me'. Real money, real tax lots, real wash-sale windows \u2014 one inserted node, and its removal is not on the table."
+    }
+  }
+}

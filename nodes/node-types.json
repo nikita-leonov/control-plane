@@ -1,53 +1,80 @@
 {
-  "_comment": "The closed verdict enum for every node type, and what each verdict must carry. Shape lives in verdict.schema.json; this file says which shape applies when, and which edge the verdict selects. A verdict that is not listed here does not exist — that is what 'closed enum' means.",
-
+  "_comment": "The closed verdict enum for every node type, and what each verdict must carry. Shape lives in verdict.schema.json; this file says which shape applies when, and which EDGE the verdict selects \u2014 graph.json says where that edge leads. A verdict that is not listed here does not exist; that is what 'closed enum' means.",
   "nodes": {
     "builder": {
       "actor": "agent",
       "verdicts": {
-        "done":    { "payload": "builderDone", "edge": "verify-fast" },
-        "blocked": { "payload": "empty", "parks": true }
+        "done": {
+          "payload": "builderDone",
+          "edge": "verify-fast"
+        },
+        "blocked": {
+          "payload": "empty",
+          "parks": true
+        }
       }
     },
-
     "repair": {
       "actor": "agent",
       "verdicts": {
-        "fixed": { "payload": "filesOnly", "edge": "verify-fast" },
-        "stuck": { "payload": "empty", "parks": true }
+        "fixed": {
+          "payload": "filesOnly",
+          "edge": "verify-fast"
+        },
+        "stuck": {
+          "payload": "empty",
+          "parks": true
+        }
       }
     },
-
     "reviewer": {
       "actor": "agent",
       "_note": "approve does not mean merge. It means this node found nothing verify cannot see. The gate is still ./verify, on the edge after this one.",
       "verdicts": {
-        "approve":          { "payload": "reviewerApprove", "edge": "verify-full" },
-        "reject":           { "payload": "reviewerReject",  "edge": "repair" },
-        "charter-question": { "payload": "empty", "parks": true }
+        "approve": {
+          "payload": "reviewerApprove",
+          "edge": "verify-full"
+        },
+        "reject": {
+          "payload": "reviewerReject",
+          "edge": "to-repair"
+        },
+        "charter-question": {
+          "payload": "empty",
+          "parks": true
+        }
       }
     },
-
     "groomer": {
       "actor": "agent",
       "verdicts": {
-        "groomed":          { "payload": "issuesOnly", "edge": "ready" },
-        "charter-question": { "payload": "empty", "parks": true }
+        "groomed": {
+          "payload": "issuesOnly",
+          "edge": "ready"
+        },
+        "charter-question": {
+          "payload": "empty",
+          "parks": true
+        }
       }
     },
-
     "sweeper": {
       "actor": "agent",
       "_note": "Anything it finds becomes an issue, not a notification. A notification is something to ignore; an issue has a state.",
       "verdicts": {
-        "clean":    { "payload": "empty",      "edge": "done" },
-        "findings": { "payload": "issuesOnly", "edge": "done" }
+        "clean": {
+          "payload": "empty",
+          "edge": "done"
+        },
+        "findings": {
+          "payload": "issuesOnly",
+          "edge": "done"
+        }
       }
     },
-
     "human": {
       "actor": "human",
-      "_note": "A human node is a node like any other; the only difference is who fills in the verdict. Its verdict is the `value` of whichever option was chosen from the question that parked the token here, and the option's `edge` is the one crossed. So its enum is not fixed here — it is whatever the parking question offered.",
+      "_note": "A human node is a node like any other; the only difference is who fills in the verdict. Its verdict is the `value` of whichever option was chosen from the question that parked the token here, and the option's `edge` is the one crossed. So its enum is not fixed here \u2014 it is whatever the parking question offered.",
       "verdicts": {},
       "verdicts_from_question": true
     }

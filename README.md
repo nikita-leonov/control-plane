@@ -39,8 +39,9 @@ dirty-file count, and each check's status and duration.
 
 ```
 factory/     the shared parts of a factory repo — ./verify template + generator
-nodes/       the verdict contract — envelope schema + per-node closed enums
-bin/         commands: verify-all, cp-verdict
+nodes/       the contract — verdict schema, per-node enums, and the graph
+bin/         commands: cp, cp-run, cp-verdict, verify-all; edges/ are transitions
+web/         the panel cp serve renders
 tools/       checks used by ./verify
 state/       generated; what the panel reads
 ```

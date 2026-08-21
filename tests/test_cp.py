@@ -92,11 +92,24 @@ class Rendering(unittest.TestCase):
         for f in cp.FACTORIES:
             self.assertIn(f, r.stdout)
 
-    def test_status_says_no_node_has_run(self):
-        """While there is no runner, the board must say so rather than render an
-        empty section as though it were a quiet one."""
+    def test_status_is_truthful_about_whether_anything_has_run(self):
+        """An empty section must never be rendered as a quiet one.
+
+        With no transition log the board says there is no runner; with one it
+        reports the count. Either is fine — silently showing nothing is not.
+        """
         r = subprocess.run([sys.executable, str(CP), "status"], capture_output=True, text=True)
-        self.assertIn("no runner", r.stdout.lower())
+        n = cp.runs()
+        if n is None:
+            self.assertIn("no runner", r.stdout.lower())
+        else:
+            self.assertIn(f"{n} edge crossings", r.stdout)
+
+    def test_runs_returns_none_when_nothing_has_ever_run(self):
+        import tempfile, unittest.mock
+        with tempfile.TemporaryDirectory() as d:
+            with unittest.mock.patch.object(cp, "STATE_DIR", pathlib.Path(d)):
+                self.assertIsNone(cp.runs())
 
     def test_decisions_names_its_own_proxy(self):
         r = subprocess.run([sys.executable, str(CP), "decisions"], capture_output=True, text=True)

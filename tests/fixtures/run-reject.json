@@ -1,0 +1,14 @@
+{
+  "_comment": "Reviewer rejects, the token goes to repair, the repair holds and it merges. Exercises the loop and the budget counter without exhausting it.",
+  "verdicts": {
+    "builder#0": {"node":"builder","token":"cp-demo-2","verdict":"done","attempt":1,
+      "payload":{"files":["a.ts"],"commits":[{"message":"First attempt","files":["a.ts"]}]}},
+    "reviewer#0": {"node":"reviewer","token":"cp-demo-2","verdict":"reject","attempt":1,
+      "payload":{"findings":[{"file":"a.ts","line":12,"criterion":"acceptance criterion 2",
+                              "summary":"the error path is not covered by any test"}]}},
+    "repair#0": {"node":"repair","token":"cp-demo-2","verdict":"fixed","attempt":2,
+      "payload":{"files":["a.ts","a.test.ts"]}},
+    "reviewer#1": {"node":"reviewer","token":"cp-demo-2","verdict":"approve","attempt":2,
+      "payload":{"criteria_met":["error path now covered"]}}
+  }
+}

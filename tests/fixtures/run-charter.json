@@ -1,0 +1,18 @@
+{
+  "_comment": "The Reviewer finds something the charter does not settle, and parks the token with a real question. This is the path that produces a decision for the seat.",
+  "verdicts": {
+    "builder#0": {"node":"builder","token":"cp-demo-3","verdict":"done","attempt":1,
+      "payload":{"files":["shared/taxonomy.ts"],
+                 "commits":[{"message":"Serve label statuses","files":["shared/taxonomy.ts"]}]}},
+    "reviewer#0": {"node":"reviewer","token":"cp-demo-3","verdict":"charter-question","attempt":1,
+      "payload":{},
+      "question":{
+        "asks":"LABEL_STATUSES is exported, served nowhere and used nowhere. Serve it or delete it?",
+        "context":[{"ref":"shared/taxonomy.ts:442","why":"where it is exported"},
+                   {"ref":"coach-5ao","why":"the issue filed when the gate found it"}],
+        "options":[
+          {"value":"serve","means":"add it to taxonomyPayload() and give the client a reason to read it","edge":"verify-full"},
+          {"value":"delete","means":"remove the export; nothing references it","edge":"to-repair"},
+          {"value":"keep","means":"leave it unserved and record why in UNSERVED_BY_DESIGN","edge":"@park"}]}}
+  }
+}
