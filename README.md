@@ -88,6 +88,32 @@ not protect. Three of the four also have GitHub remotes; finance-c-and-c has onl
 the mirror, on purpose — it carries real positions and tax lots, and pushing
 those to a third party is a decision rather than a default.
 
+## Picking this up in a new session
+
+Read `GRAPH.md` first — it is the plan of record and every forward-looking claim
+in it cites the issue that owns it. Then `br ready`. `bin/cp status` says where
+the four factories stand.
+
+The order that matters, and why: **isolation before nodes.** `bin/cp-run` refuses
+to launch a live node until the manifest contract and tool policy exist, and that
+refusal is deliberate — a runner that launches agents with ambient tools and no
+manifest is the exact failure this design prevents. Dropping that refusal is the
+last line changed before a live run, never the first.
+
+Standing constraints, all of them decisions rather than defaults:
+
+- **Everything runs on this machine.** No CI, no remote validation. A gate that
+  cannot run where the footage, the venv and the GPU weights live is not a gate.
+- **finance-c-and-c never auto-merges** and is not on GitHub. Real positions,
+  real tax lots.
+- **`./verify` is the judge.** A reviewer node is a second opinion with
+  restricted senses, judging what verify cannot see.
+- **File what you find.** A finding gets an issue rather than a widened change.
+- **Do not force a close past its blockers.** If beads refuses, it is usually
+  right and the dependency is the honest answer.
+
+The milestone that ends the talking is `cp-first-live-run-nvk`.
+
 The rule that keeps this a CEO tool rather than another inbox: **it surfaces
 decisions, never diffs.** The decision queue is the set of tokens parked on human
 nodes. If a diff gets opened that the panel did not flag, that is a bug in the
