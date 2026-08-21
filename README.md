@@ -11,10 +11,24 @@ so a gate that cannot run where the work happens is not a gate at all.
 ## Today
 
 ```
+bin/cp status               one board — gate, work, tree, what needs you
+bin/cp status --refresh     re-run every gate first
+bin/cp work <factory>       ready / in progress / waiting, there
+bin/cp decisions            only the things waiting on Nikita
+
 bin/verify-all              full gate in every factory, one board, one exit code
 bin/verify-all --fast       cheap tier only
 bin/verify-all <name>       just one
 ```
+
+`cp` is read-only and says so: anything that advances work belongs to the runner,
+which does not exist yet. It reports what is missing rather than rendering an
+empty section as a quiet one — while no node has ever run, the board says exactly
+that.
+
+It does not reimplement beads. `ready` comes from `br ready`, because a panel
+that quietly reports different numbers than the tracker it is reporting on is
+worse than no panel.
 
 Exit 0 = all green, 1 = something is red, 2 = a factory could not be run at all
 (missing repo, missing `./verify`) — a different problem from a failing check,

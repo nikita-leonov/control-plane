@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+"""cp — the seat. One screen over every factory.
+
+Read-only, deliberately. Anything that advances work is the runner's job; this
+exists so that supervising four repos is reading one board rather than opening
+four terminals. It tells the truth about what is not built yet rather than
+rendering an empty section as if it were a quiet one.
+
+  cp status              the board
+  cp status --refresh    re-run every gate first (slower, current)
+  cp work <factory>      what is ready, in progress and blocked there
+  cp decisions           only the things waiting on Nikita
+
+Exit 0 always for status; this reports, it does not gate. `bin/verify-all` is
+the thing with an opinion.
+"""
+
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+HERE = pathlib.Path(__file__).resolve().parent
+ROOT = HERE.parent
+PROJECTS = pathlib.Path("/mnt/projects")
+FACTORIES = ["control-plane", "faceoff-finder", "ai-ih-coach", "finance-c-and-c"]
+
+TTY = sys.stdout.isatty()
+def c(code, s):
+    return f"\033[{code}m{s}\033[0m" if TTY else s
+B  = lambda s: c("1", s)
+D  = lambda s: c("2", s)
+G  = lambda s: c("32", s)
+R  = lambda s: c("31", s)
+Y  = lambda s: c("33", s)
+
+
+def issues(repo):
+    """Work items from the committed JSONL — no daemon, no subprocess.
+
+    Returns None when a repo has no backlog at all, which is a different thing
+    from a repo with an empty one and must not be rendered as a zero.
+    """
+    p = PROJECTS / repo / ".beads" / "issues.jsonl"
+    if not p.exists():
+        return None
+    out = []
+    for line in p.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if o.get("deleted") or o.get("tombstone"):
+            continue
+        out.append(o)
+    return out
+
+
+def ready_ids(repo):
+    """Ready work, from beads itself.
+
+    Deliberately not reimplemented here. An early version computed readiness by
+    walking `blocks` edges in the JSONL and disagreed with `br ready` on two
+    issues in ai-ih-coach — beads has semantics around epics and started children
+    that are not visible in the edge data alone. A panel that quietly reports
+    different numbers than the tracker it is reporting on is worse than no panel;
+    it is the stale-edge failure mode, with a confident-looking board on top.
+
+    Returns None if beads cannot be reached, so the caller can say so rather than
+    print a zero.
+    """
+    try:
+        r = subprocess.run(["br", "ready", "--json"], cwd=str(PROJECTS / repo),
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return None
+        d = json.loads(r.stdout)
+        rows = d if isinstance(d, list) else d.get("issues", d.get("data", []))
+        return {x["id"] for x in rows}
+    except Exception:                                      # noqa: BLE001
+        return None
+
+
+def classify(rows, ready_set):
+    """Split the backlog. Only `ready` involves judgement, and that comes from
+    beads; everything else here is reading a status field."""
+    ready, wip, waiting, done = [], [], [], []
+    for o in rows:
+        st = o.get("status")
+        if st == "closed":
+            done.append(o)
+        elif st == "in_progress":
+            wip.append(o)
+        elif ready_set is not None and o["id"] in ready_set:
+            ready.append(o)
+        else:
+            waiting.append(o)
+    return ready, wip, waiting, done
+
+
+def git(repo, *args):
+    try:
+        r = subprocess.run(["git", "-C", str(PROJECTS / repo), *args],
+                           capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:                                      # noqa: BLE001
+        return ""
+
+
+def tree(repo):
+    dirty = len([x for x in git(repo, "status", "--porcelain").splitlines() if x])
+    ahead = git(repo, "rev-list", "--count", "@{u}..HEAD")
+    bits = []
+    if dirty:
+        bits.append(Y(f"{dirty} uncommitted"))
+    if ahead and ahead != "0":
+        bits.append(Y(f"{ahead} unpushed"))
+    return " ".join(bits) if bits else D("clean")
+
+
+def gates(refresh):
+    state = ROOT / "state" / "verify-latest.json"
+    if refresh or not state.exists():
+        subprocess.run([str(HERE / "verify-all")], capture_output=True)
+    if not state.exists():
+        return {}, None
+    d = json.loads(state.read_text())
+    by = {f["repo"]: f for f in d.get("factories", [])}
+    return by, d.get("ran_at")
+
+
+def age(iso):
+    if not iso:
+        return "never"
+    try:
+        t = time.mktime(time.strptime(iso, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+    except ValueError:
+        return iso
+    s = max(0, int(time.time() - t))
+    for n, unit in ((86400, "d"), (3600, "h"), (60, "m")):
+        if s >= n:
+            return f"{s // n}{unit} ago"
+    return f"{s}s ago"
+
+
+def decisions():
+    """Things waiting on Nikita.
+
+    A hand-maintained label today. Once the runner exists this becomes the set of
+    tokens parked on human nodes, and the label goes away — see
+    cp-panel-graph-view-cuj. Until then the panel says which one it is showing,
+    because a proxy presented as the real thing is worse than no panel.
+    """
+    out = []
+    for f in FACTORIES:
+        rows = issues(f) or []
+        for o in rows:
+            if o.get("status") == "closed":
+                continue
+            if "blocked-on-nikita" in (o.get("labels") or []):
+                out.append((f, o))
+    return out
+
+
+def runs():
+    """Edge crossings recorded so far. There is no runner yet, so: none."""
+    log = ROOT / "state" / "transitions.ndjson"
+    if not log.exists():
+        return None
+    return sum(1 for l in log.read_text().splitlines() if l.strip())
+
+
+def cmd_status(argv):
+    refresh = "--refresh" in argv
+    gate, ran = gates(refresh)
+
+    print()
+    print(D(f"  {'FACTORY':<17}{'GATE':<12}{'READY':>6}{'WIP':>5}{'WAITING':>9}   "
+            f"{'TREE':<22}{'DECIDE':>7}"))
+    dec = decisions()
+    dec_by = {}
+    for f, o in dec:
+        dec_by[f] = dec_by.get(f, 0) + 1
+
+    for f in FACTORIES:
+        g = gate.get(f)
+        if not g:
+            mark = Y("?  unrun")
+        elif g.get("ok"):
+            p = len([x for x in g["checks"] if x["status"] == "pass"])
+            t = len([x for x in g["checks"] if x["status"] != "skipped"])
+            mark = G(f"green {p}/{t}")
+        else:
+            mark = R("red      ")
+
+        rows = issues(f)
+        if rows is None:
+            ready = wip = blocked = D("  —")
+        else:
+            rs = ready_ids(f)
+            r, w, b, _ = classify(rows, rs)
+            ready = f"{len(r):>3}" if rs is not None else D("  ?")
+            wip, blocked = f"{len(w):>3}", f"{len(b):>3}"
+
+        n = dec_by.get(f, 0)
+        dmark = Y(f"{n:>3}") if n else D("  0")
+        print(f"  {f:<17}{pad(mark, 12)}{ready:>6}{wip:>5}{blocked:>9}   "
+              f"{pad(tree(f), 22)}{dmark:>7}")
+
+    print()
+    nb = [f for f in FACTORIES if issues(f) is None]
+    print(D(f"  gate read {age(ran)}") + D("   ·  cp status --refresh to re-run"))
+    if nb:
+        print(D(f"  no backlog in {', '.join(nb)} — work there is not dispatchable yet"))
+
+    if dec:
+        print()
+        print(B("  WAITING ON YOU"))
+        for f, o in dec:
+            print(f"    {D(f):<17}{o['id']:<28}{o['title'][:44]}")
+
+    n = runs()
+    print()
+    if n is None:
+        print(D("  No node has ever run — the graph is documented but has no runner.")
+              + D("  (cp-runner-3k1)"))
+    else:
+        print(D(f"  {n} edge crossings recorded"))
+    print()
+    return 0
+
+
+def strip(s):
+    """Visible width of a string that may carry ANSI colour."""
+    import re
+    return re.sub(r"\033\[[0-9;]*m", "", s)
+
+
+def pad(s, width):
+    """Left-align to a visible width. str.ljust counts escape bytes, so it
+    silently misaligns every coloured column."""
+    return s + " " * max(0, width - len(strip(s)))
+
+
+def cmd_work(argv):
+    if not argv:
+        print("cp work <factory>", file=sys.stderr)
+        return 2
+    f = argv[0]
+    rows = issues(f)
+    if rows is None:
+        print(f"  {f} has no backlog. Its work is not dispatchable yet.")
+        return 0
+    ready, wip, waiting, done = classify(rows, ready_ids(f))
+    print()
+    for label, group, col in (("IN PROGRESS", wip, Y), ("READY", ready, G),
+                              ("WAITING", waiting, D)):
+        if not group:
+            continue
+        print(f"  {B(label)}  {D(str(len(group)))}")
+        for o in sorted(group, key=lambda x: (x.get("priority", 9), x["id"]))[:20]:
+            print(f"    {D('P' + str(o.get('priority', '?')))} {o['id']:<30}{o['title'][:52]}")
+        if len(group) > 20:
+            print(D(f"    … {len(group) - 20} more"))
+        print()
+    print(D(f"  {len(done)} closed"))
+    print()
+    return 0
+
+
+def cmd_decisions(argv):
+    dec = decisions()
+    print()
+    if not dec:
+        print("  Nothing is waiting on you.")
+    else:
+        for f, o in dec:
+            print(f"  {B(o['id'])}  {D(f)}")
+            print(f"    {o['title']}")
+            print()
+    print(D("  Today this is the `blocked-on-nikita` label, not parked tokens —"))
+    print(D("  the graph has no runner yet (cp-panel-graph-view-cuj)."))
+    print()
+    return 0
+
+
+def main():
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    fn = {"status": cmd_status, "work": cmd_work, "decisions": cmd_decisions}.get(cmd)
+    if not fn:
+        print(f"cp: unknown command {cmd!r}. Try --help.", file=sys.stderr)
+        return 2
+    return fn(rest)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
