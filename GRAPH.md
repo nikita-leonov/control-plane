@@ -149,7 +149,7 @@ manifest* assembled by a deterministic script. That is what makes isolation
 testable rather than hoped for: you can assert on the exact input set.
 
 ```bash
-claude -p \
+cd "$WORKTREE" && claude -p \                       # cwd is part of the contract
   --system-prompt-file nodes/reviewer/system.md \   # replace, never append
   --allowedTools 'Read,Grep,Glob,Bash(git diff:*),Bash(git show:*)' \
   --disallowedTools 'Edit,Write,Bash(git push:*),Bash(git merge:*),Bash(br *)' \
@@ -158,7 +158,7 @@ claude -p \
   --add-dir "$WORKTREE" \
   --settings nodes/reviewer/settings.json \         # PreToolUse hook, the backstop
   --output-format json \
-  < input-manifest.json
+  input-manifest.json
 ```
 
 `--system-prompt` rather than `--append-system-prompt`: appending leaves the
@@ -169,7 +169,32 @@ that can send email is not a Reviewer. **`--resume`, `--continue` and
 `--fork-session` are banned outright**; they are the literal
 inherit-the-transcript flags, and a node that resumes is not a node.
 
-Contract: `cp-node-isolation-i7d`.
+`cd "$WORKTREE"` is not housekeeping. Auto-memory is keyed by project path, so
+the working directory decides whether the operator's memory index is handed to
+the node — see "Leaks" below. It is a manifest field with a validator behind it
+rather than a line in a launch script, because it is load-bearing.
+
+`--system-prompt-file` is absent from `claude --help` but real, and it validates
+the path it is given. That is worth stating because the rest of this section is
+a list of flags, and a contract made of flags is worth only as much as the
+checking behind it: each one above was probed against the installed CLI rather
+than taken from documentation.
+
+The contract is data, not prose: `nodes/node-types.json` holds `launch`
+(the banned and required flag lists) and each node's `inputs` whitelist, and
+`tests/test_manifest.py` asserts the runner's argv against those lists rather
+than against strings copied into the test — so the contract and what runs cannot
+drift apart while both look right.
+
+```
+nodes/manifest.schema.json   the input manifest — the exact set a node receives
+bin/cp-manifest              assemble | check | hash
+```
+
+`cp-manifest assemble` is a **whitelist copied out**, never a blacklist deleted:
+a forgotten copy omits an input, a forgotten delete forwards one, and only one
+of those two mistakes is safe. The manifest hash goes on the transition log at
+every node crossing, so *was isolation held* is answerable from the log alone.
 
 ### Tools are limited by the launcher, not requested in a prompt
 
@@ -200,14 +225,33 @@ The channels that actually leak are ambient:
 | Working tree | Builder leaves scratch files or notes the Reviewer then reads |
 | beads fields | Builder writes issue notes; the Reviewer reads the issue |
 | The payload | a free-text field carries an argument for approval |
-| `~/.claude` memory | Builder writes a memory; the Reviewer's session loads it |
+| `~/.claude` memory | Builder writes a memory; the Reviewer's session loads the index line |
 | MCP servers | ambient capability in every node |
 | Commit messages | Builder writes prose aimed at the reviewer |
 | Code comments | `// reviewer: this is intentional` |
 
-The memory channel is currently wide open and specific to this setup: the
-project's memory directory loads into every session, which is a direct unguarded
-path between any two nodes.
+The memory channel is specific to this setup, and it is narrower than it first
+looks — but it is real, and it took measuring rather than reading to establish
+which. Probed against the installed CLI:
+
+- A headless run **inside the project directory** is handed the operator's
+  `MEMORY.md` **index** verbatim — one Builder-authored line per memory. Memory
+  *bodies* are not loaded: a canary string living only in a body came back `NO`.
+  So the channel is one line of attacker-controlled free text per memory, which
+  is narrow, ample, and pointed in exactly the wrong direction.
+- `--system-prompt` does not close it. Neither does `--setting-sources ""`.
+- `--bare` does close it — it skips auto-memory outright — but it cannot
+  authenticate on an OAuth subscription ("Not logged in · Please run /login"),
+  and nodes run on Claude Code rather than on an API key. Redirecting
+  `CLAUDE_CONFIG_DIR` fails the same way, since the credentials live there too.
+- **Changing the working directory out of the project closes it.** Auto-memory
+  is keyed by project path; a run from elsewhere reports `NONE`.
+
+So the closer is cwd, not a flag, which is why the runner puts every node in its
+own worktree outside `/mnt/projects` and `cp-manifest check` refuses a manifest
+whose `cwd` is inside the project. The general lesson is the one the golden set
+exists to teach a level up: a control that was never measured is a control that
+is not there.
 
 Two of these cannot be closed, only bounded. Commit messages are part of the diff
 and cannot be withheld from a reviewer that must read the diff — so they are
@@ -444,10 +488,13 @@ Everything above describes the frame. Almost none of it runs:
   `cp-sweeper-node-rcn`).
 - **No charters**, so the Reviewer has nothing to judge "should this exist"
   against and `charter-question` has no referent (`cp-charters-fyn`).
-- **Nothing enforces isolation.** No manifest, no per-node tool policy, no closed
-  leak channels — today "the Reviewer never sees the Builder's transcript" is an
-  intention with nothing behind it (`cp-node-isolation-i7d`,
-  `cp-node-tool-policy-wyi`, `cp-leak-audit-z57`).
+- **Isolation is half enforced.** The manifest exists: what each node may
+  receive is declared, assembled by whitelist, hashed onto the transition log,
+  and asserted by tests — including that the Builder's payload does not reach
+  the Reviewer, and that no node runs where the memory index would reach it.
+  What is still missing is the per-node tool policy and the remaining leak
+  channels (`cp-node-tool-policy-wyi`, `cp-leak-audit-z57`). Live launch stays
+  refused until the first of those lands.
 
 A note on tooling, since it will come up: **not LangGraph.** It would be a
 framework taken on to get conditional edges we would write anyway, and every node

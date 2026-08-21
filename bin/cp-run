@@ -32,6 +32,22 @@ STATE = ROOT / "state"
 TOKENS = STATE / "tokens"
 LOG = STATE / "transitions.ndjson"
 
+# Worktrees live outside the project on purpose, and it is not only about the
+# filesystem boundary. Auto-memory is keyed by project path: a node launched
+# inside /mnt/projects/<factory> receives the operator's MEMORY.md index
+# verbatim — Builder-authored free text arriving in the Reviewer's context. No
+# flag closes that (--system-prompt does not, --setting-sources does not, and
+# --bare cannot authenticate on an OAuth subscription). Leaving the directory
+# does. Measured, not assumed: tests/test_manifest.py::MemoryChannel.
+WORKTREES = pathlib.Path(os.environ.get("CP_WORKTREES", "/tmp/cp-worktrees"))
+
+import importlib.machinery                                          # noqa: E402
+import importlib.util                                               # noqa: E402
+
+_l = importlib.machinery.SourceFileLoader("cp_manifest", str(ROOT / "bin" / "cp-manifest"))
+cpm = importlib.util.module_from_spec(importlib.util.spec_from_loader("cp_manifest", _l))
+_l.exec_module(cpm)
+
 
 def die(msg, code=2):
     print(f"cp-run: {msg}", file=sys.stderr)
@@ -75,6 +91,95 @@ def read_token(tid):
     return json.loads(p.read_text())
 
 
+def worktree_for(tok):
+    """Where this node runs. Outside the project — see WORKTREES."""
+    return WORKTREES / tok["factory"] / tok["token"]
+
+
+def gather_source(tok, node, factory):
+    """Everything the runner happens to have that a node might be given.
+
+    Deliberately generous: it is cp-manifest's job to strip this down to what
+    the node type declares. Assembling the narrow set here would move the
+    whitelist out of the contract and into the caller, where nothing checks it.
+    """
+    root = PROJECTS / factory
+    src = {"issue": {"id": tok["token"]}}
+
+    charter = cpm.file_input("CHARTER.md", root=root)
+    if charter:
+        src["charter"] = charter
+    evidence = cpm.file_input("verify-report.json", root=root)
+    if evidence:
+        src["evidence"] = evidence
+    if tok.get("criteria"):
+        src["criteria"] = tok["criteria"]
+    if tok.get("findings"):
+        src["findings"] = tok["findings"]
+    if tok.get("diff"):
+        src["diff"] = tok["diff"]
+
+    # Present on purpose, and expected to be dropped: the Builder's payload is
+    # exactly the channel an argument for approval would travel down. If a
+    # future edit widens the whitelist, the stripping test fails loudly rather
+    # than this quietly starting to flow.
+    if tok.get("last_payload"):
+        src["payload"] = tok["last_payload"]
+    return src
+
+
+def build_launch_argv(node, manifest_path, worktree, types, output="json"):
+    """The exact command line a live node is launched with.
+
+    Written and tested while live launch is still refused, on purpose. A test
+    that asserts "the banned flags are absent" needs a real subject; asserting
+    over code that does not exist yet proves nothing. It also means dropping the
+    refusal later changes one line, instead of inventing the argv on the same
+    day it first runs.
+
+    Nothing here is a string the caller chose: the flags come from
+    node-types.json, which is the isolation contract of record.
+    """
+    launch = types["launch"]
+    argv = ["claude", "--print",
+            "--system-prompt-file", str(ROOT / "nodes" / node / "system.md"),
+            "--strict-mcp-config",
+            "--disable-slash-commands",
+            "--add-dir", str(worktree),
+            "--settings", str(ROOT / "nodes" / node / "settings.json"),
+            "--output-format", output,
+            str(manifest_path)]
+
+    # The contract, enforced against its own output rather than trusted. A flag
+    # added by a careless edit is caught here, not in a live run.
+    for banned in launch["banned_flags"]:
+        if banned in argv:
+            die(f"launch argv for {node} contains {banned}, which node-types.json "
+                f"bans: {launch['_banned_why']}", 2)
+    for req in launch["required_flags"]:
+        if req not in argv:
+            die(f"launch argv for {node} is missing required flag {req}", 2)
+    return argv
+
+
+def manifest_for(tok, node, factory):
+    """Assemble, validate and hash — on every node visit, dry run included.
+
+    Not only on the live path. Assembly that runs only when a real node launches
+    is code the entire suite never executes, dormant until the one day it is
+    load-bearing. Running it always means the dry-run tests exercise it and the
+    hash starts landing on the transition log now.
+    """
+    wt = worktree_for(tok)
+    src = gather_source(tok, node, factory)
+    man = cpm.assemble(node, tok["token"], factory, str(wt),
+                       tok["seen"].get(node, 0) + 1, src)
+    errs = cpm.check(man)
+    if errs:
+        die("manifest for node {} is invalid:\n  {}".format(node, "\n  ".join(errs)), 2)
+    return man, cpm.manifest_hash(man)
+
+
 def run_node(tok, node, graph, types, args):
     """Get a verdict out of a node.
 
@@ -83,7 +188,17 @@ def run_node(tok, node, graph, types, args):
     failure the whole design is built to prevent — and a runner that quietly does
     it anyway is worse than one that will not start.
     """
+    # Assembled before the refusal, not after. The manifest is what makes a node
+    # a node, so it is built on every visit — a dry run that skipped it would be
+    # exercising a different code path than the one that eventually goes live.
+    man, mhash = manifest_for(tok, node, factory=tok["factory"])
+
     if not args.dry_run:
+        # The argv is constructed even here, so the contract check in
+        # build_launch_argv runs against what would actually be launched. Then
+        # the refusal stands: it is the last line to change before a live run.
+        build_launch_argv(node, STATE / f"manifest-{tok['token']}.json",
+                          worktree_for(tok), types)
         die("live nodes need the isolation contract and tool policy first "
             "(cp-node-isolation-i7d, cp-node-tool-policy-wyi). "
             "Use --dry-run.", 1)
@@ -103,7 +218,15 @@ def run_node(tok, node, graph, types, args):
                        capture_output=True, text=True)
     if r.returncode != 0:
         die(f"node {node} produced an invalid result:\n{r.stderr}", 1)
-    return env
+
+    # What the node was given travels with what it decided. "Was isolation held"
+    # is then answerable after the fact from the log alone, without a transcript.
+    (STATE / f"manifest-{tok['token']}.json").write_text(json.dumps(man, indent=2) + "\n")
+    tok["last_payload"] = env.get("payload")
+    if node == "reviewer" and env["verdict"] == "reject":
+        tok["findings"] = env["payload"]["findings"]     # the one prose channel,
+        # and it points the way that cannot buy an approval.
+    return env, mhash
 
 
 def cross(edge_name, edge, tok, factory, args):
@@ -159,26 +282,27 @@ def advance(tok, graph, types, args):
             tok["status"] = "parked"
             return save(tok)
 
-        env = run_node(tok, pos, graph, types, args)
+        env, mhash = run_node(tok, pos, graph, types, args)
         verdict = env["verdict"]
         rule = spec["verdicts"][verdict]
         tok["prev_vertex"] = pos
 
         if rule.get("parks"):
             record({"ts": now(), "token": tok["token"], "factory": factory, "from": pos,
-                    "verdict": verdict, "edge": None, "exit": None, "to": "@park", "ms": 0}, tok)
+                    "verdict": verdict, "edge": None, "exit": None, "to": "@park", "ms": 0,
+                    "manifest": mhash}, tok)
             tok.update(status="parked", node="@park",
                        question=env.get("question"), parked_from=pos)
             return save(tok)
 
-        do_edge(tok, rule["edge"], graph, factory, args, pos, verdict)
+        do_edge(tok, rule["edge"], graph, factory, args, pos, verdict, manifest=mhash)
         if tok["status"] == "parked":
             return save(tok)
 
     die("graph did not settle in 200 steps", 2)
 
 
-def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
+def do_edge(tok, edge_name, graph, factory, args, from_node, verdict, manifest=None):
     edge = graph["edges"].get(edge_name)
     if not edge:
         die(f"no edge {edge_name!r} in graph.json", 2)
@@ -238,7 +362,8 @@ def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
         return rc, ms
 
     record({"ts": now(), "token": tok["token"], "factory": factory, "from": from_node,
-            "verdict": verdict, "edge": edge_name, "exit": rc, "to": to, "ms": ms}, tok)
+            "verdict": verdict, "edge": edge_name, "exit": rc, "to": to, "ms": ms,
+            **({"manifest": manifest} if manifest else {})}, tok)
     tok["prev_vertex"] = edge_name
     tok["node"] = to
     save(tok)

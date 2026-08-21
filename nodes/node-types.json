@@ -12,7 +12,12 @@
           "payload": "empty",
           "parks": true
         }
-      }
+      },
+      "inputs": [
+        "issue",
+        "criteria",
+        "charter"
+      ]
     },
     "repair": {
       "actor": "agent",
@@ -25,7 +30,14 @@
           "payload": "empty",
           "parks": true
         }
-      }
+      },
+      "inputs": [
+        "issue",
+        "criteria",
+        "charter",
+        "findings",
+        "evidence"
+      ]
     },
     "reviewer": {
       "actor": "agent",
@@ -43,7 +55,14 @@
           "payload": "empty",
           "parks": true
         }
-      }
+      },
+      "inputs": [
+        "diff",
+        "criteria",
+        "charter",
+        "evidence"
+      ],
+      "_inputs_why": "The diff, the criteria it is judged against, the charter, and what the gate already found. Nothing else \u2014 notably not the Builder's payload, which is where an argument for approval would travel."
     },
     "groomer": {
       "actor": "agent",
@@ -56,7 +75,11 @@
           "payload": "empty",
           "parks": true
         }
-      }
+      },
+      "inputs": [
+        "issue",
+        "charter"
+      ]
     },
     "sweeper": {
       "actor": "agent",
@@ -70,7 +93,10 @@
           "payload": "issuesOnly",
           "edge": "done"
         }
-      }
+      },
+      "inputs": [
+        "charter"
+      ]
     },
     "human": {
       "actor": "human",
@@ -78,5 +104,27 @@
       "verdicts": {},
       "verdicts_from_question": true
     }
+  },
+  "launch": {
+    "_comment": "How a node is invoked. Isolation is a property of the process: each node is a separate `claude -p` with a fresh context window, so the only question is what bytes the runner puts in. These lists are the contract; tests/test_manifest.py asserts the runner's argv against them.",
+    "banned_flags": [
+      "--resume",
+      "--continue",
+      "--fork-session",
+      "--append-system-prompt",
+      "--dangerously-skip-permissions",
+      "--allow-dangerously-skip-permissions"
+    ],
+    "_banned_why": "--resume/--continue/--fork-session are the literal inherit-the-transcript flags; a node that resumes is not a node. --append-system-prompt leaves the default agent prompt underneath, with behaviours nobody chose or audited. The skip-permissions pair would make the tool policy advisory.",
+    "required_flags": [
+      "--print",
+      "--system-prompt-file",
+      "--strict-mcp-config",
+      "--disable-slash-commands",
+      "--output-format"
+    ],
+    "_required_why": "--system-prompt-file replaces rather than appends (it is undocumented in --help but real, and validates the path: measured, not assumed). --strict-mcp-config because otherwise every ambient MCP server is live in every node \u2014 here Gmail, Drive, Calendar and Chrome, and a Reviewer that can send email is not a Reviewer.",
+    "cwd_must_leave_project": true,
+    "_cwd_why": "Measured, not assumed. Auto-memory is keyed by project path: a headless run inside /mnt/projects/control-plane receives the operator's MEMORY.md index verbatim, which is Builder-authored free text arriving in the Reviewer's context. --system-prompt does not close it and neither does --setting-sources ''; --bare does, but --bare cannot authenticate on an OAuth subscription ('Not logged in'), and nodes run on Claude Code rather than an API key. Changing cwd to the node's own worktree closes it."
   }
 }

@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control-plane.local/manifest.schema.json",
+  "title": "Node input manifest",
+  "description": "The exact, enumerated set of bytes a node receives. A node never inherits context; it receives this. Isolation is a property of the runner, and this file is the shape of that property — which is what makes it testable rather than hoped for.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "node",
+    "token",
+    "factory",
+    "attempt",
+    "cwd",
+    "inputs"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "manifest_version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1
+    },
+    "node": {
+      "type": "string",
+      "pattern": "^[a-z][a-z-]{1,23}$"
+    },
+    "token": {
+      "type": "string",
+      "pattern": "^[a-z]+-[a-z0-9.-]+$"
+    },
+    "factory": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,31}$"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 99
+    },
+    "cwd": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^/",
+      "description": "Where the node runs. Measured, not assumed: auto-memory is keyed by project path, so a node launched inside the project directory receives the operator's memory index — Builder-authored free text arriving in the Reviewer's context. Running in the node's own worktree is what closes that channel. See tests/test_manifest.py::MemoryChannel."
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Only the keys this node type declares in node-types.json. Anything else is stripped at assembly rather than forwarded — an undeclared field is exactly how a Builder would argue its case to a Reviewer.",
+      "additionalProperties": false,
+      "properties": {
+        "issue": {
+          "$ref": "#/$defs/issue"
+        },
+        "criteria": {
+          "$ref": "#/$defs/criteria"
+        },
+        "charter": {
+          "$ref": "#/$defs/file"
+        },
+        "diff": {
+          "$ref": "#/$defs/diff"
+        },
+        "evidence": {
+          "$ref": "#/$defs/file"
+        },
+        "findings": {
+          "$ref": "#/$defs/findings"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "file": {
+      "description": "A referenced file: where it is, and the hash of what it said. The path alone would let content change under a recorded manifest, which would make the manifest hash evidence of nothing.",
+      "type": "object",
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "issue": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z]+-[a-z0-9.-]+$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        }
+      }
+    },
+    "criteria": {
+      "description": "The acceptance criteria, as a list. The Reviewer judges against these and its approval must name which it checked — so they arrive as discrete items rather than a paragraph to interpret.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "items": {
+        "type": "string",
+        "maxLength": 400
+      }
+    },
+    "diff": {
+      "description": "A sha range, not a blob. The node reads the diff with the tools its policy grants; naming the range is what bounds WHAT it may look at, while the tool policy bounds HOW.",
+      "type": "object",
+      "required": [
+        "base",
+        "head"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{7,40}$"
+        },
+        "head": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{7,40}$"
+        },
+        "files": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": "^[^/].*$"
+          }
+        }
+      }
+    },
+    "findings": {
+      "description": "Reviewer findings travelling to Repair. The one place prose crosses between nodes, and it crosses in the direction that cannot buy an approval.",
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": [
+          "file",
+          "summary"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "criterion": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 400
+          }
+        }
+      }
+    }
+  }
+}

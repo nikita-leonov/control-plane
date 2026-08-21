@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""cp-manifest — assemble, validate and hash a node's input manifest.
+
+A node never inherits context; it receives a manifest assembled by a
+deterministic script. That is what makes isolation testable rather than hoped
+for: you can assert on the exact input set.
+
+The verb that carries the design is `assemble`. It is given every input the
+runner happens to have and returns only the keys that node type declares in
+node-types.json. Undeclared keys are **dropped, never forwarded** — a free-text
+field arriving alongside the legitimate inputs is precisely how a Builder would
+argue its case to a Reviewer, and stripping is the only handling that cannot be
+argued with.
+
+  cp-manifest assemble --node reviewer --token cp-x --factory control-plane \
+                       --cwd /path/to/worktree --source @available.json
+  cp-manifest check manifest.json
+  cp-manifest hash  manifest.json      # what goes on the transition log
+
+Exit 0 valid, 1 invalid, 2 cp-manifest itself is broken — the same three-way
+contract ./verify uses, so an edge can route on it without special cases.
+"""
+
+import argparse
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import pathlib
+import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+NODES = HERE.parent / "nodes"
+PROJECT_ROOT = HERE.parent
+
+# Reuse cp-verdict's hand-written JSON Schema subset rather than growing a second
+# one. tests/test_verdict.py pins that implementation against the real
+# jsonschema library; a copy here would be a second thing to keep honest.
+_loader = importlib.machinery.SourceFileLoader("cp_verdict", str(HERE / "cp-verdict"))
+_cpv = importlib.util.module_from_spec(importlib.util.spec_from_loader("cp_verdict", _loader))
+_loader.exec_module(_cpv)
+validate = _cpv.validate
+
+MANIFEST_VERSION = 1
+
+
+def die(msg, code=2):
+    print(f"cp-manifest: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def load(name):
+    try:
+        return json.loads((NODES / name).read_text())
+    except FileNotFoundError:
+        die(f"missing {NODES / name}")
+    except json.JSONDecodeError as e:
+        die(f"{name} is not valid JSON: {e}")
+
+
+def canonical(man):
+    """Byte-stable rendering. The hash is evidence, so it must not depend on key
+    order or whitespace that happened to come out of whichever writer built it."""
+    return json.dumps(man, sort_keys=True, separators=(",", ":")).encode()
+
+
+def manifest_hash(man):
+    return hashlib.sha256(canonical(man)).hexdigest()
+
+
+def file_input(path, root=None):
+    """A referenced file, as path + hash of content.
+
+    The path alone would let the file change under a recorded manifest, which
+    would make the recorded hash evidence of nothing.
+    """
+    p = pathlib.Path(path)
+    if root and not p.is_absolute():
+        p = pathlib.Path(root) / p
+    try:
+        data = p.read_bytes()
+    except FileNotFoundError:
+        return None
+    return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+
+
+def declared_inputs(node):
+    types = load("node-types.json")
+    spec = types["nodes"].get(node)
+    if not spec:
+        die(f"{node!r} is not a declared node type ({', '.join(types['nodes'])})", 1)
+    if spec.get("verdicts_from_question"):
+        die(f"{node!r} is a human node — it is handed a question, not a manifest", 1)
+    if "inputs" not in spec:
+        die(f"{node!r} declares no inputs in node-types.json; "
+            "an undeclared node cannot be isolated", 2)
+    return spec["inputs"]
+
+
+def assemble(node, token, factory, cwd, attempt, source):
+    """Whitelist, never blacklist.
+
+    Built by copying the declared keys OUT of source rather than deleting
+    unknown keys from a copy of it — a forgotten delete forwards a field, while
+    a forgotten copy merely omits one. Only one of those two failure modes is
+    safe, so the code is written so that the unsafe one cannot occur.
+    """
+    allowed = declared_inputs(node)
+    inputs = {}
+    for key in allowed:
+        if key in source and source[key] is not None:
+            inputs[key] = source[key]
+    return {
+        "manifest_version": MANIFEST_VERSION,
+        "node": node,
+        "token": token,
+        "factory": factory,
+        "attempt": attempt,
+        "cwd": cwd,
+        "inputs": inputs,
+    }
+
+
+def check(man):
+    schema = load("manifest.schema.json")
+    errs = validate(man, schema, schema)
+    if errs:
+        return errs
+
+    node = man["node"]
+    allowed = set(declared_inputs(node))
+    extra = set(man["inputs"]) - allowed
+    if extra:
+        errs.append(f"$.inputs: {sorted(extra)} not declared for {node} "
+                    f"(declared: {sorted(allowed)}) — an undeclared input is a leak channel")
+
+    # Measured, not assumed: auto-memory is keyed by project path, so a node run
+    # inside the project receives the operator's memory index verbatim.
+    types = load("node-types.json")
+    if types.get("launch", {}).get("cwd_must_leave_project"):
+        try:
+            inside = pathlib.Path(man["cwd"]).resolve().is_relative_to(PROJECT_ROOT)
+        except (OSError, ValueError):
+            inside = False
+        if inside:
+            errs.append(f"$.cwd: {man['cwd']} is inside {PROJECT_ROOT} — a node run there "
+                        "receives the operator's auto-memory index. Use its worktree.")
+    return errs
+
+
+def read_arg(v):
+    if v is None:
+        return None
+    if v.startswith("@"):
+        p = v[1:]
+        try:
+            return json.loads(sys.stdin.read() if p == "-" else pathlib.Path(p).read_text())
+        except FileNotFoundError:
+            die(f"no such file: {p}")
+        except json.JSONDecodeError as e:
+            die(f"{p} is not valid JSON: {e}", 1)
+    try:
+        return json.loads(v)
+    except json.JSONDecodeError as e:
+        die(f"not valid JSON: {e}", 1)
+
+
+def report(errs, what):
+    if errs:
+        print(f"cp-manifest: {what} is not a valid input manifest", file=sys.stderr)
+        for e in errs:
+            print(f"  {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _read(path, what):
+    try:
+        return json.loads(pathlib.Path(path).read_text())
+    except FileNotFoundError:
+        print(f"cp-manifest: {path} does not exist", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"cp-manifest: {path} is not JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="cp-manifest", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    a = sub.add_parser("assemble", help="build a manifest, stripping undeclared inputs")
+    a.add_argument("--node", required=True)
+    a.add_argument("--token", required=True)
+    a.add_argument("--factory", required=True)
+    a.add_argument("--cwd", required=True)
+    a.add_argument("--attempt", type=int, default=1)
+    a.add_argument("--source", help="JSON, or @file, or @- for stdin")
+    a.add_argument("--out")
+
+    c = sub.add_parser("check", help="validate an existing manifest")
+    c.add_argument("file")
+
+    h = sub.add_parser("hash", help="the manifest hash recorded on the transition log")
+    h.add_argument("file")
+
+    args = ap.parse_args()
+
+    if args.cmd == "hash":
+        return print(manifest_hash(_read(args.file, "manifest"))) or 0
+
+    if args.cmd == "check":
+        return report(check(_read(args.file, "manifest")), args.file)
+
+    src = read_arg(args.source) or {}
+    if not isinstance(src, dict):
+        die("--source must be a JSON object of candidate inputs", 1)
+    man = assemble(args.node, args.token, args.factory, args.cwd, args.attempt, src)
+    rc = report(check(man), "this manifest")
+    if rc:
+        return rc
+    text = json.dumps(man, indent=2) + "\n"
+    if args.out:
+        pathlib.Path(args.out).write_text(text)
+        print(f"{args.node} manifest -> {args.out}  sha256:{manifest_hash(man)[:12]}")
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(0)

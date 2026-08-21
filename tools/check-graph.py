@@ -12,6 +12,8 @@ import json, pathlib, sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 g = json.loads((ROOT / "nodes" / "graph.json").read_text())
 nt = json.loads((ROOT / "nodes" / "node-types.json").read_text())
+ms = json.loads((ROOT / "nodes" / "manifest.schema.json").read_text())
+MANIFEST_INPUTS = set(ms["properties"]["inputs"]["properties"])
 
 nodes = {n for n, s in nt["nodes"].items() if not s.get("verdicts_from_question")}
 human = {n for n, s in nt["nodes"].items() if s.get("verdicts_from_question")}
@@ -38,6 +40,25 @@ for n, spec in nt["nodes"].items():
             continue
         if rule.get("edge") not in edges:
             bad.append(f"{n}/{v} selects edge {rule.get('edge')!r}, which is not in graph.json")
+
+# An agent node with no declared inputs cannot be isolated: there is nothing to
+# assemble a manifest from and nothing to strip against. Gated here rather than
+# only in the suite, so a node added without a whitelist turns the board red.
+for n in nodes:
+    if "inputs" not in nt["nodes"][n]:
+        bad.append(f"node {n}: declares no inputs — it cannot be isolated")
+    for key in nt["nodes"][n].get("inputs", []):
+        if key not in MANIFEST_INPUTS:
+            bad.append(f"node {n}: input {key!r} is not in manifest.schema.json")
+
+launch = nt.get("launch") or {}
+for field in ("banned_flags", "required_flags"):
+    if not launch.get(field):
+        bad.append(f"node-types.json: launch.{field} is missing — "
+                   "the isolation contract has to be data, not a habit")
+for f in launch.get("banned_flags", []):
+    if f in launch.get("required_flags", []):
+        bad.append(f"launch: {f} is both required and banned")
 
 if g.get("entry") not in nodes:
     bad.append(f"entry {g.get('entry')!r} is not a node")
@@ -67,4 +88,5 @@ for start in nodes | edges:
 if bad:
     print("\n".join("  " + b for b in bad), file=sys.stderr)
     sys.exit(1)
-print(f"{len(nodes)} nodes, {len(edges)} edges, {len(terms)} terminals — all routes land")
+print(f"{len(nodes)} nodes, {len(edges)} edges, {len(terms)} terminals — all routes land, "
+      f"every node declares its inputs")

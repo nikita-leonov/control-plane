@@ -44,8 +44,8 @@ dirty-file count, and each check's status and duration.
 
 ```
 factory/     the shared parts of a factory repo — ./verify template + generator
-nodes/       the contract — verdict schema, per-node enums, and the graph
-bin/         commands: cp, cp-run, cp-verdict, verify-all; edges/ are transitions
+nodes/       the contract — verdict schema, input manifest, per-node enums, graph
+bin/         cp, cp-run, cp-verdict, cp-manifest, verify-all; edges/ are transitions
 web/         the panel cp serve renders
 tools/       checks used by ./verify
 state/       generated; what the panel reads
@@ -94,9 +94,11 @@ Read `GRAPH.md` first — it is the plan of record and every forward-looking cla
 in it cites the issue that owns it. Then `br ready`. `bin/cp status` says where
 the four factories stand.
 
-The order that matters, and why: **isolation before nodes.** `bin/cp-run` refuses
-to launch a live node until the manifest contract and tool policy exist, and that
-refusal is deliberate — a runner that launches agents with ambient tools and no
+The order that matters, and why: **isolation before nodes.** The manifest
+contract now exists — `nodes/manifest.schema.json` and `bin/cp-manifest`, with
+the hash of what each node was given recorded on every crossing. `bin/cp-run`
+still refuses to launch a live node until the per-node tool policy joins it, and
+that refusal is deliberate — a runner that launches agents with ambient tools and no
 manifest is the exact failure this design prevents. Dropping that refusal is the
 last line changed before a live run, never the first.
 
