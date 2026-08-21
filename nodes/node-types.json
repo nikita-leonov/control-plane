@@ -17,7 +17,31 @@
         "issue",
         "criteria",
         "charter"
-      ]
+      ],
+      "tools": {
+        "allowed": [
+          "Read",
+          "Grep",
+          "Glob",
+          "Edit",
+          "Write",
+          "Bash(./verify:*)",
+          "Bash(git add:*)",
+          "Bash(git status:*)",
+          "Bash(git diff:*)",
+          "Bash(cp-verdict:*)"
+        ],
+        "denied": [
+          "Bash(git merge:*)",
+          "Bash(git push:*)",
+          "Bash(git commit:*)",
+          "Bash(br:*)",
+          "ToolSearch",
+          "Task",
+          "Agent"
+        ],
+        "_why": "It cannot cross its own outgoing edge. commit is an edge, merge is an edge, and closing the issue is an edge \u2014 the rule the whole graph rests on stops being rhetorical exactly here."
+      }
     },
     "repair": {
       "actor": "agent",
@@ -37,7 +61,30 @@
         "charter",
         "findings",
         "evidence"
-      ]
+      ],
+      "tools": {
+        "allowed": [
+          "Read",
+          "Grep",
+          "Glob",
+          "Edit",
+          "Write",
+          "Bash(./verify:*)",
+          "Bash(git add:*)",
+          "Bash(git status:*)",
+          "Bash(git diff:*)",
+          "Bash(cp-verdict:*)"
+        ],
+        "denied": [
+          "Bash(git merge:*)",
+          "Bash(git push:*)",
+          "Bash(git commit:*)",
+          "Bash(br:*)",
+          "ToolSearch",
+          "Task",
+          "Agent"
+        ]
+      }
     },
     "reviewer": {
       "actor": "agent",
@@ -62,7 +109,33 @@
         "charter",
         "evidence"
       ],
-      "_inputs_why": "The diff, the criteria it is judged against, the charter, and what the gate already found. Nothing else \u2014 notably not the Builder's payload, which is where an argument for approval would travel."
+      "_inputs_why": "The diff, the criteria it is judged against, the charter, and what the gate already found. Nothing else \u2014 notably not the Builder's payload, which is where an argument for approval would travel.",
+      "tools": {
+        "allowed": [
+          "Read",
+          "Grep",
+          "Glob",
+          "Bash(git diff:*)",
+          "Bash(git show:*)",
+          "Bash(git log:*)",
+          "Bash(cp-verdict:*)"
+        ],
+        "denied": [
+          "Edit",
+          "Write",
+          "NotebookEdit",
+          "Bash(git push:*)",
+          "Bash(git merge:*)",
+          "Bash(git commit:*)",
+          "Bash(git rebase:*)",
+          "Bash(git reset:*)",
+          "Bash(br:*)",
+          "ToolSearch",
+          "Task",
+          "Agent"
+        ],
+        "_why": "A judge that can edit what it is judging is not a judge. Note it cannot run ./verify either: the gate already ran on the edge behind it, and a Reviewer that re-runs the gate is judging its own rerun."
+      }
     },
     "groomer": {
       "actor": "agent",
@@ -79,7 +152,32 @@
       "inputs": [
         "issue",
         "charter"
-      ]
+      ],
+      "tools": {
+        "allowed": [
+          "Read",
+          "Grep",
+          "Glob",
+          "Bash(br create:*)",
+          "Bash(br show:*)",
+          "Bash(br ready:*)",
+          "Bash(br dep:*)",
+          "Bash(cp-verdict:*)"
+        ],
+        "denied": [
+          "Edit",
+          "Write",
+          "NotebookEdit",
+          "Bash(br close:*)",
+          "Bash(git push:*)",
+          "Bash(git merge:*)",
+          "Bash(git commit:*)",
+          "ToolSearch",
+          "Task",
+          "Agent"
+        ],
+        "_why": "It files work; it does not do the work and it does not close it."
+      }
     },
     "sweeper": {
       "actor": "agent",
@@ -96,7 +194,30 @@
       },
       "inputs": [
         "charter"
-      ]
+      ],
+      "tools": {
+        "allowed": [
+          "Read",
+          "Grep",
+          "Glob",
+          "Bash(br create:*)",
+          "Bash(br show:*)",
+          "Bash(cp-verdict:*)"
+        ],
+        "denied": [
+          "Edit",
+          "Write",
+          "NotebookEdit",
+          "Bash(br close:*)",
+          "Bash(git push:*)",
+          "Bash(git merge:*)",
+          "Bash(git commit:*)",
+          "ToolSearch",
+          "Task",
+          "Agent"
+        ],
+        "_why": "Anything it finds becomes an issue, not a notification."
+      }
     },
     "human": {
       "actor": "human",
@@ -125,6 +246,8 @@
     ],
     "_required_why": "--system-prompt-file replaces rather than appends (it is undocumented in --help but real, and validates the path: measured, not assumed). --strict-mcp-config because otherwise every ambient MCP server is live in every node \u2014 here Gmail, Drive, Calendar and Chrome, and a Reviewer that can send email is not a Reviewer.",
     "cwd_must_leave_project": true,
-    "_cwd_why": "Measured, not assumed. Auto-memory is keyed by project path: a headless run inside /mnt/projects/control-plane receives the operator's MEMORY.md index verbatim, which is Builder-authored free text arriving in the Reviewer's context. --system-prompt does not close it and neither does --setting-sources ''; --bare does, but --bare cannot authenticate on an OAuth subscription ('Not logged in'), and nodes run on Claude Code rather than an API key. Changing cwd to the node's own worktree closes it."
+    "_cwd_why": "Measured, not assumed. Auto-memory is keyed by project path: a headless run inside /mnt/projects/control-plane receives the operator's MEMORY.md index verbatim, which is Builder-authored free text arriving in the Reviewer's context. --system-prompt does not close it and neither does --setting-sources ''; --bare does, but --bare cannot authenticate on an OAuth subscription ('Not logged in'), and nodes run on Claude Code rather than an API key. Changing cwd to the node's own worktree closes it.",
+    "_tools_comment": "Deny by default: a tool absent from `allowed` is not granted, and `denied` names the ones that must never be granted even by a careless widening of the allowlist. The PreToolUse hook (bin/cp-guard) sits behind both, so a gap in one is not a gap in both. Allowlists are sub-tool scoped \u2014 Bash(git diff:*) grants exactly that, not Bash \u2014 which is what makes the policy enforceable rather than advisory.",
+    "_escalation_comment": "ToolSearch, Task and Agent are denied at every node because they are the tools that grant other tools. A node that can spawn a subagent gets an agent with default tools, which is the whole policy bypassed in one call. Observed: a Reviewer asked to edit a file did not attempt Edit \u2014 it attempted ToolSearch to go and get Edit."
   }
 }

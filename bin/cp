@@ -171,11 +171,33 @@ def decisions():
 
 
 def runs():
-    """Edge crossings recorded so far. There is no runner yet, so: none."""
+    """Edge crossings recorded so far. None if nothing has ever run."""
+    rows = log_rows()
+    if rows is None:
+        return None
+    return sum(1 for r in rows if r.get("kind") != "violation")
+
+
+def log_rows():
     log = STATE_DIR / "transitions.ndjson"
     if not log.exists():
         return None
-    return sum(1 for l in log.read_text().splitlines() if l.strip())
+    out = []
+    for line in log.read_text().splitlines():
+        if line.strip():
+            try:
+                out.append(json.loads(line))
+            except ValueError:                             # noqa: BLE001
+                pass
+    return out
+
+
+def violations():
+    """Blocked tool calls. A denial that only happens inside a node is a denial
+    nobody sees — the point of recording it is that a Reviewer which tried to
+    call Edit is something to know about, not something quietly handled."""
+    rows = log_rows() or []
+    return [r for r in rows if r.get("kind") == "violation"]
 
 
 def cmd_status(argv):
@@ -234,6 +256,18 @@ def cmd_status(argv):
               + D("  (cp-runner-3k1)"))
     else:
         print(D(f"  {n} edge crossings recorded"))
+
+    v = violations()
+    if v:
+        # Deliberately not dimmed. Every other line on this board is a status;
+        # this one is a node that tried to do something it is not allowed to do.
+        print()
+        print(f"  {R('BLOCKED TOOL CALLS')}  {len(v)}")
+        for r in v[-5:]:
+            what = r["tool"] + (f" — {r['command'][:44]}" if r.get("command") else "")
+            print(f"    {D(r['ts'][5:16]):<14}{r['from']:<10}{r.get('token',''):<16}{what}")
+        if len(v) > 5:
+            print(D(f"    … {len(v) - 5} more"))
     print()
     return 0
 
@@ -355,6 +389,7 @@ def api_state():
                     pass
     out["decisions"] = [{"factory": f, "id": o["id"], "title": o["title"]}
                         for f, o in decisions()]
+    out["violations"] = violations()
     return out
 
 

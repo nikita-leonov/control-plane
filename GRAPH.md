@@ -213,8 +213,36 @@ a judge. And the Builder cannot cross its own outgoing edge — the rule the who
 graph rests on stops being rhetorical exactly here.
 
 **An attempted violation is a signal, not just a denial.** It goes on the
-transition log and onto the panel. A Reviewer that tried to call Edit is
-something to know about (`cp-node-tool-policy-wyi`).
+transition log carrying `kind: violation` and onto the panel — in the token's
+journey, where it reads as what it is: something that happened *at* a vertex
+rather than a move between two. It is never counted as a crossing.
+
+The policy lives in `nodes/node-types.json` beside each node's verdict enum, and
+`bin/cp-guard` only enforces it. The `--settings` file the launcher passes is
+*generated* from that same policy rather than kept next to it: two
+hand-maintained copies of one rule is two rules, and the drift shows up on the
+day one of them was the lock that mattered.
+
+Two things the guard has to get right that a naive allowlist does not:
+
+**Compound commands.** `Bash(git diff:*)` matched against the head of a command
+string would let `git diff && rm -rf .` through. Every segment is matched, and a
+segment that cannot be parsed is denied rather than assumed harmless.
+
+**The tools that grant tools.** `ToolSearch`, `Task` and `Agent` are denied at
+every node, because a node that can spawn a subagent gets an agent with default
+tools — the whole policy bypassed in one call. This is not theoretical: a
+Reviewer under this policy, told to edit a file, did not attempt `Edit`. It
+attempted `ToolSearch`, to go and fetch `Edit`. Deny-by-default caught it, but
+only because nobody had listed `ToolSearch` — which is the kind of safety that
+evaporates the first time an allowlist is widened by someone in a hurry. So it
+is now an explicit denial and a check in `tools/check-graph.py`.
+
+That probe is also how we know the hook fires at all: a live node under the
+generated settings was denied and left a violation row on the log. The gate
+itself stays offline — it must run without a model being reachable — so what
+`./verify` checks is the policy, the matching, and the shape of the settings the
+launcher writes.
 
 ### Leaks: blocking the transcript is the easy part
 
@@ -492,9 +520,12 @@ Everything above describes the frame. Almost none of it runs:
   receive is declared, assembled by whitelist, hashed onto the transition log,
   and asserted by tests — including that the Builder's payload does not reach
   the Reviewer, and that no node runs where the memory index would reach it.
-  What is still missing is the per-node tool policy and the remaining leak
-  channels (`cp-node-tool-policy-wyi`, `cp-leak-audit-z57`). Live launch stays
-  refused until the first of those lands.
+  The per-node tool policy exists too: declared in the contract, enforced by a
+  `PreToolUse` backstop, with denials recorded and surfaced. What is still
+  missing is the remaining leak channels — working tree, beads fields, commit
+  messages, code comments (`cp-leak-audit-z57`) — and the nodes themselves. The
+  refusal in `bin/cp-run` now guards a smaller gap than it did, and dropping it
+  is still the last line changed before a live run, not the first.
 
 A note on tooling, since it will come up: **not LangGraph.** It would be a
 framework taken on to get conditional edges we would write anyway, and every node

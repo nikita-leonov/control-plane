@@ -51,6 +51,50 @@ for n in nodes:
         if key not in MANIFEST_INPUTS:
             bad.append(f"node {n}: input {key!r} is not in manifest.schema.json")
 
+# The two asymmetries, checked through the guard's real decision function rather
+# than by looking for strings in a list. Membership can be satisfied while the
+# enforcement path disagrees; this cannot.
+import importlib.machinery, importlib.util                              # noqa: E402
+_gl = importlib.machinery.SourceFileLoader("cp_guard", str(ROOT / "bin" / "cp-guard"))
+cpg = importlib.util.module_from_spec(importlib.util.spec_from_loader("cp_guard", _gl))
+_gl.exec_module(cpg)
+
+ASYMMETRIES = [
+    ("reviewer", "Edit",  None,                "a judge that can edit what it is judging is not a judge"),
+    ("reviewer", "Write", None,                "same"),
+    ("builder",  "Bash",  "git merge main",    "the Builder cannot cross its own outgoing edge"),
+    ("builder",  "Bash",  "git push origin",   "same"),
+    ("builder",  "Bash",  "br close cp-x",     "closing the issue is an edge, not the Builder's call"),
+]
+for n in nodes:
+    if "tools" not in nt["nodes"][n]:
+        bad.append(f"node {n}: declares no tool policy — deny by default has nothing to deny from")
+for node, tool, cmd, why in ASYMMETRIES:
+    if node not in nodes or "tools" not in nt["nodes"].get(node, {}):
+        continue
+    ok, _ = cpg.decide(node, tool, cmd)
+    if ok:
+        bad.append(f"{node} would be allowed {tool}"
+                   f"{'(' + cmd + ')' if cmd else ''} — {why}")
+
+# The tools that grant other tools. One of these in an allowlist makes every
+# other denial advisory, so they are checked at every node rather than listed.
+for n in nodes:
+    if "tools" not in nt["nodes"][n]:
+        continue
+    for esc in ("ToolSearch", "Task", "Agent"):
+        if cpg.decide(n, esc)[0]:
+            bad.append(f"node {n}: {esc} is allowed — it grants other tools, "
+                       "which makes the rest of the policy advisory")
+
+# Every node must be able to emit a verdict, or it has no way to advance at all.
+for n in nodes:
+    if "tools" not in nt["nodes"][n]:
+        continue
+    ok, _ = cpg.decide(n, "Bash", "cp-verdict emit --node x")
+    if not ok:
+        bad.append(f"node {n}: cannot call cp-verdict — it has no way to return a verdict")
+
 launch = nt.get("launch") or {}
 for field in ("banned_flags", "required_flags"):
     if not launch.get(field):
@@ -89,4 +133,4 @@ if bad:
     print("\n".join("  " + b for b in bad), file=sys.stderr)
     sys.exit(1)
 print(f"{len(nodes)} nodes, {len(edges)} edges, {len(terms)} terminals — all routes land, "
-      f"every node declares its inputs")
+      f"every node declares its inputs and its tools, {len(ASYMMETRIES)} asymmetries hold")

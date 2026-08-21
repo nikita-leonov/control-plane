@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""cp-guard — the PreToolUse backstop behind a node's tool allowlist.
+
+`--allowedTools` is the policy; this is the second lock on the same door. A gap
+in one must not be a gap in both, which is the only reason to have two.
+
+It also turns a denial into a *signal*. A Reviewer that tried to call Edit is
+something to know about — it goes on the transition log and onto the panel,
+rather than being silently refused inside a node nobody reads.
+
+  cp-guard hook                     # stdin: a PreToolUse event; stdout: the decision
+  cp-guard settings --node reviewer --out state/settings-reviewer.json
+  cp-guard check --node reviewer --tool Edit
+  cp-guard policy --node reviewer   # what this node may call
+
+The policy lives in nodes/node-types.json beside the node's verdict enum, never
+in a launch script. This file only enforces it, and the settings file it writes
+is generated from that same source so the two cannot drift.
+
+Exit 0 the decision was made (allow or deny — both are a working guard),
+2 cp-guard itself is broken. A broken guard must never look like an allow.
+"""
+
+import argparse
+import json
+import os
+import pathlib
+import re
+import sys
+import time
+
+HERE = pathlib.Path(__file__).resolve().parent
+ROOT = HERE.parent
+NODES = ROOT / "nodes"
+LOG = ROOT / "state" / "transitions.ndjson"
+
+# Where one shell command ends and the next begins. Checking only the head of a
+# compound command is the classic bypass: `git diff && rm -rf .` would sail past
+# a prefix match on `git diff`. Every segment is matched, and a segment that
+# cannot be parsed is denied rather than assumed harmless.
+SEPARATORS = re.compile(r"&&|\|\||[;|&\n]|\$\(|`|<\(")
+
+
+def die(msg):
+    print(f"cp-guard: {msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def load_types():
+    try:
+        return json.loads((NODES / "node-types.json").read_text())
+    except FileNotFoundError:
+        die(f"missing {NODES / 'node-types.json'}")
+    except json.JSONDecodeError as e:
+        die(f"node-types.json is not valid JSON: {e}")
+
+
+def policy_for(node):
+    spec = load_types()["nodes"].get(node)
+    if not spec:
+        die(f"{node!r} is not a declared node type")
+    if "tools" not in spec:
+        die(f"{node!r} declares no tool policy; deny-by-default has nothing to deny from")
+    return spec["tools"]
+
+
+def parse_pattern(pat):
+    """`Edit` -> (Edit, None).  `Bash(git diff:*)` -> (Bash, 'git diff')."""
+    m = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\((.*?):?\*?\)", pat)
+    if m:
+        return m.group(1), m.group(2)
+    return pat, None
+
+
+def segments(command):
+    return [s.strip() for s in SEPARATORS.split(command or "") if s.strip()]
+
+
+def prefix_matches(seg, prefix):
+    """Token-boundary match: `git diff` matches `git diff --stat`, not `git difftool`."""
+    return seg == prefix or seg.startswith(prefix + " ")
+
+
+def matches(pat, tool, command):
+    name, prefix = parse_pattern(pat)
+    if name != tool:
+        return False
+    if prefix is None:
+        return True                      # the whole tool, whatever its input
+    segs = segments(command)
+    if not segs:
+        return False
+    return all(prefix_matches(s, prefix) for s in segs)
+
+
+def touches(pat, tool, command):
+    """Does any segment of this call fall under the pattern? Used for denials,
+    where one bad segment in a compound command is enough to refuse the call."""
+    name, prefix = parse_pattern(pat)
+    if name != tool:
+        return False
+    if prefix is None:
+        return True
+    return any(prefix_matches(s, prefix) for s in segments(command))
+
+
+def decide(node, tool, command=None):
+    """Deny wins, then allow, then deny by default.
+
+    Returns (allowed: bool, reason: str). The default branch is the one that
+    matters: a tool nobody thought about is refused, not permitted.
+    """
+    pol = policy_for(node)
+    for pat in pol.get("denied", []):
+        if touches(pat, tool, command):
+            return False, f"{node} is denied {pat}"
+    for pat in pol.get("allowed", []):
+        if matches(pat, tool, command):
+            return True, f"{node} allows {pat}"
+    return False, (f"{tool} is not in {node}'s allowlist — deny by default "
+                   f"(allowed: {', '.join(pol.get('allowed', [])) or 'nothing'})")
+
+
+def record_violation(node, tool, command, reason):
+    """A denial is a signal, not just a refusal.
+
+    It goes on the transition log so it is part of the token's provenance, and
+    it carries kind=violation so it is never mistaken for a crossing — a
+    violation is something that happened AT a node, not a move between two.
+    """
+    row = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "token": os.environ.get("CP_TOKEN", "unknown"),
+        "factory": os.environ.get("CP_FACTORY", "unknown"),
+        "run": int(os.environ.get("CP_RUN", 1) or 1),
+        "kind": "violation",
+        "from": node, "to": None, "edge": None, "verdict": None, "exit": None,
+        "tool": tool,
+        "command": (command or "")[:200],
+        "why": reason,
+    }
+    try:
+        LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG, "a") as f:
+            f.write(json.dumps(row) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as e:                                     # noqa: BLE001
+        # A guard that cannot log must still deny. Losing the signal is bad;
+        # letting the call through because logging failed would be worse.
+        print(f"cp-guard: could not record violation: {e}", file=sys.stderr)
+    return row
+
+
+def settings_for(node):
+    """The --settings payload, generated from the policy rather than kept beside it."""
+    return {
+        "_generated_by": "bin/cp-guard settings — do not edit; the policy lives in "
+                         "nodes/node-types.json",
+        "hooks": {
+            "PreToolUse": [
+                {"matcher": "*",
+                 "hooks": [{"type": "command", "command": f"{HERE / 'cp-guard'} hook"}]}
+            ]
+        },
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="cp-guard", description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("hook", help="decide a PreToolUse event read from stdin")
+
+    s = sub.add_parser("settings", help="write the --settings file for a node")
+    s.add_argument("--node", required=True)
+    s.add_argument("--out")
+
+    c = sub.add_parser("check", help="would this call be allowed?")
+    c.add_argument("--node", required=True)
+    c.add_argument("--tool", required=True)
+    c.add_argument("--command")
+
+    p = sub.add_parser("policy", help="what this node may call")
+    p.add_argument("--node", required=True)
+
+    a = ap.parse_args()
+
+    if a.cmd == "policy":
+        print(json.dumps(policy_for(a.node), indent=2))
+        return 0
+
+    if a.cmd == "settings":
+        text = json.dumps(settings_for(a.node), indent=2) + "\n"
+        if a.out:
+            pathlib.Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+            pathlib.Path(a.out).write_text(text)
+        else:
+            sys.stdout.write(text)
+        return 0
+
+    if a.cmd == "check":
+        ok, why = decide(a.node, a.tool, a.command)
+        print(("allow: " if ok else "deny: ") + why)
+        return 0 if ok else 1
+
+    # hook
+    try:
+        event = json.loads(sys.stdin.read() or "{}")
+    except json.JSONDecodeError as e:
+        die(f"PreToolUse event is not JSON: {e}")
+
+    node = os.environ.get("CP_NODE")
+    if not node:
+        # No node means this hook is running somewhere it was not meant to. It
+        # refuses rather than guesses: a guard that does not know what it is
+        # guarding cannot claim the call is safe.
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny",
+            "permissionDecisionReason": "cp-guard: CP_NODE is unset — refusing to "
+                                        "guess which node's policy applies"}}))
+        return 0
+
+    tool = event.get("tool_name", "")
+    command = (event.get("tool_input") or {}).get("command")
+    ok, why = decide(node, tool, command)
+    if not ok:
+        record_violation(node, tool, command, why)
+
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow" if ok else "deny",
+        "permissionDecisionReason": why}}))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(0)

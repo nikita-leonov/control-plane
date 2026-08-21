@@ -141,6 +141,8 @@ td.k{color:var(--ink);font-weight:500}
   border:1px solid var(--rule);padding:4px 6px}
 .runbar label{font:9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .err{color:var(--crit);font:11px var(--mono);margin-top:6px}
+.step.viol .n{color:var(--crit);font-weight:700}
+.step.viol .what{color:var(--crit)}
 .tab .pk{display:inline-block;background:var(--accent);color:#fff;border-radius:8px;
   padding:1px 5px;margin-left:6px;font-size:9px}
 .tab[aria-selected="true"] .pk{background:#fff;color:var(--accent)}
@@ -317,7 +319,7 @@ function drawGraph(g, f){
   let NOW = null, CAME = null, STEP = null;
   if(SELTOK){
     const tk = S.tokens.find(x=>x.token===SELTOK);
-    const hist = S.transitions.filter(x=>x.token===SELTOK);
+    const hist = S.transitions.filter(x=>x.token===SELTOK && x.kind!=='violation');
     const last = hist[hist.length-1];
     NOW = tk ? tk.node : (last ? last.to : null);
     CAME = last ? last.from : null;
@@ -413,6 +415,17 @@ function drawTokens(){
     r.onclick = pick;
     r.onkeydown = e => { if(e.key==='Enter'||e.key===' '){ e.preventDefault(); pick(); } };
   });
+}
+
+/* Violation text is the one thing on this page written by a node rather than by
+   a person: the tool call it attempted, verbatim. Everything else here comes
+   from the tracker or the runner. It is escaped rather than trusted, because a
+   node that is already trying to call a tool it is denied is exactly the thing
+   not to hand raw innerHTML. Other fields are still interpolated raw
+   (cp-panel-escaping-v2b). */
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g,
+    c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 function ago(iso){
@@ -542,8 +555,14 @@ function drawDetail(g){
     // and splicing them together reads as one long path that never happened.
     const run = tk ? (tk.run || 1) : null;
     const all = T.filter(x=>x.token===SELTOK);
-    const rows = run ? all.filter(x=>(x.run||1)===run) : all;
-    const earlier = all.length - rows.length;
+    const scoped = run ? all.filter(x=>(x.run||1)===run) : all;
+    /* Violations belong in the journey — they are part of what happened to this
+       token — but they are not crossings and must not be counted or numbered as
+       one. A node that tried something it is not allowed to do is an event at a
+       vertex, not a move between two. */
+    const rows = scoped.filter(x=>x.kind!=='violation');
+    const viol = scoped.filter(x=>x.kind==='violation');
+    const earlier = all.filter(x=>x.kind!=='violation').length - rows.length;
     $('#dtitle').innerHTML = `Journey of <span style="color:var(--accent)">${SELTOK}</span>` +
       (tk && tk.issue ? `<span style="text-transform:none;letter-spacing:0;color:var(--ink3);
         font-family:var(--sans);font-weight:400"> — ${tk.issue.title}</span>` : '');
@@ -551,7 +570,20 @@ function drawDetail(g){
     /* The journey reads as a list. A path traced over the graph looks like
        information and is mostly geometry — the order things happened in is the
        part you actually want to read. */
-    const steps = rows.map((r,i)=>{
+    // Merged back in timestamp order so the list reads as what happened, while
+    // only the crossings carry a step number.
+    let stepNo = 0;
+    const steps = scoped.slice().sort((a,b)=>(a.ts||'').localeCompare(b.ts||''))
+      .map(r=>{
+      if(r.kind==='violation'){
+        return `<div class="step viol">
+          <div class="n">!</div>
+          <div class="at">${r.from}</div>
+          <div class="what"><b>blocked ${r.tool}</b>${
+            r.command?` <i>${esc(r.command).slice(0,60)}</i>`:''} <i>— ${esc(r.why||'')}</i></div>
+          <div class="ms"></div></div>`;
+      }
+      const i = stepNo++;
       const what = r.actor === 'human'
         ? `<b>you answered ${r.verdict}</b> <i>(${r.via||'cli'})</i>`
         : r.verdict
@@ -578,7 +610,9 @@ function drawDetail(g){
 
     $('#detail').innerHTML = `<div class="journey">${steps}${tail}</div>
       <div class="ctx" style="margin-top:10px">${rows.length} crossing${
-        rows.length===1?'':'s'}${run>1?` · run ${run}`:''}${earlier
+        rows.length===1?'':'s'}${viol.length?` · <b style="color:var(--crit)">${
+        viol.length} blocked tool call${viol.length===1?'':'s'}</b>`:''}${
+        run>1?` · run ${run}`:''}${earlier
         ? ` · ${earlier} more from earlier run${earlier===1?'':'s'}`:''}. This is the
         whole provenance record — why it landed is a path, not a transcript.</div>`;
     return;

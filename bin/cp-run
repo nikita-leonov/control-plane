@@ -48,6 +48,10 @@ _l = importlib.machinery.SourceFileLoader("cp_manifest", str(ROOT / "bin" / "cp-
 cpm = importlib.util.module_from_spec(importlib.util.spec_from_loader("cp_manifest", _l))
 _l.exec_module(cpm)
 
+_g = importlib.machinery.SourceFileLoader("cp_guard", str(ROOT / "bin" / "cp-guard"))
+cpg = importlib.util.module_from_spec(importlib.util.spec_from_loader("cp_guard", _g))
+_g.exec_module(cpg)
+
 
 def die(msg, code=2):
     print(f"cp-run: {msg}", file=sys.stderr)
@@ -141,12 +145,23 @@ def build_launch_argv(node, manifest_path, worktree, types, output="json"):
     node-types.json, which is the isolation contract of record.
     """
     launch = types["launch"]
+    tools = types["nodes"][node]["tools"]
+
+    # The settings file is generated from the same policy, never kept beside it.
+    # Two hand-maintained copies of one rule is two rules, and the drift only
+    # shows up the day one of them was the lock that mattered.
+    settings = STATE / f"settings-{node}.json"
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps(cpg.settings_for(node), indent=2) + "\n")
+
     argv = ["claude", "--print",
             "--system-prompt-file", str(ROOT / "nodes" / node / "system.md"),
             "--strict-mcp-config",
             "--disable-slash-commands",
+            "--allowedTools", ",".join(tools["allowed"]),
+            "--disallowedTools", ",".join(tools["denied"]),
             "--add-dir", str(worktree),
-            "--settings", str(ROOT / "nodes" / node / "settings.json"),
+            "--settings", str(settings),
             "--output-format", output,
             str(manifest_path)]
 
@@ -160,6 +175,17 @@ def build_launch_argv(node, manifest_path, worktree, types, output="json"):
         if req not in argv:
             die(f"launch argv for {node} is missing required flag {req}", 2)
     return argv
+
+
+def env_for_node(tok, node):
+    """What the launched process gets. CP_NODE is load-bearing: without it the
+    PreToolUse hook refuses every call rather than guessing a policy."""
+    return {**os.environ,
+            "CP_NODE": node,
+            "CP_TOKEN": tok["token"],
+            "CP_FACTORY": tok["factory"],
+            "CP_RUN": str(tok.get("run", 1)),
+            "CP_ATTEMPT": str(tok["seen"].get(node, 0) + 1)}
 
 
 def manifest_for(tok, node, factory):

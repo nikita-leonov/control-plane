@@ -44,8 +44,10 @@ dirty-file count, and each check's status and duration.
 
 ```
 factory/     the shared parts of a factory repo — ./verify template + generator
-nodes/       the contract — verdict schema, input manifest, per-node enums, graph
-bin/         cp, cp-run, cp-verdict, cp-manifest, verify-all; edges/ are transitions
+nodes/       the contract — verdict schema, input manifest, per-node enums and
+             tool policy, graph
+bin/         cp, cp-run, cp-verdict, cp-manifest, cp-guard, verify-all;
+             edges/ are transitions
 web/         the panel cp serve renders
 tools/       checks used by ./verify
 state/       generated; what the panel reads
@@ -94,13 +96,15 @@ Read `GRAPH.md` first — it is the plan of record and every forward-looking cla
 in it cites the issue that owns it. Then `br ready`. `bin/cp status` says where
 the four factories stand.
 
-The order that matters, and why: **isolation before nodes.** The manifest
-contract now exists — `nodes/manifest.schema.json` and `bin/cp-manifest`, with
-the hash of what each node was given recorded on every crossing. `bin/cp-run`
-still refuses to launch a live node until the per-node tool policy joins it, and
-that refusal is deliberate — a runner that launches agents with ambient tools and no
-manifest is the exact failure this design prevents. Dropping that refusal is the
-last line changed before a live run, never the first.
+The order that matters, and why: **isolation before nodes.** Both halves now
+exist — `nodes/manifest.schema.json` with `bin/cp-manifest` for what a node may
+*see*, and the per-node tool policy in `nodes/node-types.json` with `bin/cp-guard`
+for what it may *do*. What each node was given is hashed onto every crossing, and
+a blocked tool call is recorded and shown rather than silently refused.
+
+`bin/cp-run` still refuses to launch a live node, and that refusal is deliberate:
+the nodes themselves do not exist yet, and the remaining leak channels are not
+closed. Dropping it is the last line changed before a live run, never the first.
 
 Standing constraints, all of them decisions rather than defaults:
 
