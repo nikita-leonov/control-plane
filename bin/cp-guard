@@ -26,6 +26,7 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import sys
 import time
 
@@ -34,11 +35,20 @@ ROOT = HERE.parent
 NODES = ROOT / "nodes"
 LOG = ROOT / "state" / "transitions.ndjson"
 
-# Where one shell command ends and the next begins. Checking only the head of a
-# compound command is the classic bypass: `git diff && rm -rf .` would sail past
-# a prefix match on `git diff`. Every segment is matched, and a segment that
-# cannot be parsed is denied rather than assumed harmless.
-SEPARATORS = re.compile(r"&&|\|\||[;|&\n]|\$\(|`|<\(")
+# Where one shell command ends and the next begins.
+#
+# Checking only the head of a compound command is the classic bypass:
+# `git diff && rm -rf .` would sail past a prefix match on `git diff`. But
+# splitting the raw text on those characters is its own bug, and a worse one: a
+# separator inside quotes is DATA. A Reviewer's verdict payload describing an
+# `&` that should be `|` was refused on exactly that, and the node reworded its
+# finding until the guard let it through — a control that quietly edits what a
+# judge can say (cp-guard-quoting-m0m).
+#
+# So: a real lexer, in non-POSIX mode so quotes survive on the tokens and can be
+# told apart from bare text.
+OPERATORS = {";", "|", "||", "&", "&&", "\n", "(", ")"}
+SUBSTITUTION = ("$(", "`", "<(", "${")
 
 
 def die(msg):
@@ -72,8 +82,55 @@ def parse_pattern(pat):
     return pat, None
 
 
+class Unparseable(Exception):
+    """An unbalanced quote. Denied rather than guessed at — a command the guard
+    cannot read is a command it cannot vouch for."""
+
+
 def segments(command):
-    return [s.strip() for s in SEPARATORS.split(command or "") if s.strip()]
+    """Split a command into the individual commands it runs.
+
+    Quoting is respected: `--payload '{"a": "x | y"}'` is one segment, because
+    that pipe is a character in a JSON string and not an operator.
+    """
+    if not (command or "").strip():
+        return []
+    # Scanned on the raw text, tracking single-quote state, because tokenising
+    # can split `$(` into `$` and `(` and lose the signal. Single quotes are the
+    # one context where these are inert; inside double quotes they still execute.
+    inside, i = False, 0
+    while i < len(command):
+        c = command[i]
+        if c == "'":
+            inside = not inside
+        elif not inside:
+            if command.startswith(("$(", "<(", "${"), i) or c == "`":
+                raise Unparseable(f"command substitution at offset {i}")
+        i += 1
+
+    lex = shlex.shlex(command, posix=False, punctuation_chars=True)
+    lex.whitespace_split = True
+    try:
+        tokens = list(lex)
+    except ValueError as e:                       # unbalanced quote
+        raise Unparseable(str(e)) from e
+
+    out, cur = [], []
+    for t in tokens:
+        if t in OPERATORS:
+            if cur:
+                out.append(" ".join(cur))
+                cur = []
+            continue
+        # Substitution executes whatever it contains, and it still executes
+        # inside double quotes. Single quotes are inert, so they are the one
+        # place these characters are just characters.
+        if not t.startswith("'") and any(m in t for m in SUBSTITUTION):
+            raise Unparseable(f"command substitution in {t!r}")
+        cur.append(t)
+    if cur:
+        out.append(" ".join(cur))
+    return out
 
 
 def prefix_matches(seg, prefix):
@@ -81,19 +138,16 @@ def prefix_matches(seg, prefix):
     return seg == prefix or seg.startswith(prefix + " ")
 
 
-def matches(pat, tool, command):
+def matches_segment(pat, tool, seg):
     name, prefix = parse_pattern(pat)
     if name != tool:
         return False
     if prefix is None:
         return True                      # the whole tool, whatever its input
-    segs = segments(command)
-    if not segs:
-        return False
-    return all(prefix_matches(s, prefix) for s in segs)
+    return prefix_matches(seg, prefix)
 
 
-def touches(pat, tool, command):
+def touches(pat, tool, segs):
     """Does any segment of this call fall under the pattern? Used for denials,
     where one bad segment in a compound command is enough to refuse the call."""
     name, prefix = parse_pattern(pat)
@@ -101,7 +155,7 @@ def touches(pat, tool, command):
         return False
     if prefix is None:
         return True
-    return any(prefix_matches(s, prefix) for s in segments(command))
+    return any(prefix_matches(s, prefix) for s in segs)
 
 
 def decide(node, tool, command=None):
@@ -111,14 +165,39 @@ def decide(node, tool, command=None):
     matters: a tool nobody thought about is refused, not permitted.
     """
     pol = policy_for(node)
-    for pat in pol.get("denied", []):
-        if touches(pat, tool, command):
+    allowed, denied = pol.get("allowed", []), pol.get("denied", [])
+
+    is_bash = any(parse_pattern(p)[1] is not None and parse_pattern(p)[0] == tool
+                  for p in allowed + denied)
+    if not is_bash:
+        segs = []                        # a whole-tool grant; there is no command
+    else:
+        try:
+            segs = segments(command)
+        except Unparseable as e:
+            return False, f"unparseable command, denied rather than guessed: {e}"
+        if not segs:
+            return False, f"{tool} with no command to check"
+
+    for pat in denied:
+        if touches(pat, tool, segs):
             return False, f"{node} is denied {pat}"
-    for pat in pol.get("allowed", []):
-        if matches(pat, tool, command):
-            return True, f"{node} allows {pat}"
+
+    # Every segment has to be allowed by SOMETHING. Requiring them all to match
+    # the same pattern refused `git show X | head`, where both halves are fine.
+    if not segs:
+        for pat in allowed:
+            if matches_segment(pat, tool, ""):
+                return True, f"{node} allows {pat}"
+    else:
+        unmatched = [s for s in segs
+                     if not any(matches_segment(p, tool, s) for p in allowed)]
+        if not unmatched:
+            return True, f"{node} allows all {len(segs)} segment(s)"
+        return False, (f"{unmatched[0].split()[0] if unmatched[0] else tool} is not in "
+                       f"{node}'s allowlist — deny by default")
     return False, (f"{tool} is not in {node}'s allowlist — deny by default "
-                   f"(allowed: {', '.join(pol.get('allowed', [])) or 'nothing'})")
+                   f"(allowed: {', '.join(allowed) or 'nothing'})")
 
 
 def record_violation(node, tool, command, reason):

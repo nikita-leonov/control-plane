@@ -29,7 +29,17 @@
           "Bash(git add:*)",
           "Bash(git status:*)",
           "Bash(git diff:*)",
-          "Bash(cp-verdict:*)"
+          "Bash(cp-verdict:*)",
+          "Bash(head:*)",
+          "Bash(tail:*)",
+          "Bash(wc:*)",
+          "Bash(sort:*)",
+          "Bash(uniq:*)",
+          "Bash(cut:*)",
+          "Bash(nl:*)",
+          "Bash(cat:*)",
+          "Bash(column:*)",
+          "Bash(grep:*)"
         ],
         "denied": [
           "Bash(git merge:*)",
@@ -38,7 +48,23 @@
           "Bash(br:*)",
           "ToolSearch",
           "Task",
-          "Agent"
+          "Agent",
+          "Bash(sed:*)",
+          "Bash(awk:*)",
+          "Bash(perl:*)",
+          "Bash(python:*)",
+          "Bash(python3:*)",
+          "Bash(ruby:*)",
+          "Bash(node:*)",
+          "Bash(xargs:*)",
+          "Bash(tee:*)",
+          "Bash(dd:*)",
+          "Bash(install:*)",
+          "Bash(chmod:*)",
+          "Bash(curl:*)",
+          "Bash(wget:*)",
+          "Bash(nc:*)",
+          "Bash(ssh:*)"
         ],
         "_why": "It cannot cross its own outgoing edge. commit is an edge, merge is an edge, and closing the issue is an edge \u2014 the rule the whole graph rests on stops being rhetorical exactly here."
       }
@@ -73,7 +99,17 @@
           "Bash(git add:*)",
           "Bash(git status:*)",
           "Bash(git diff:*)",
-          "Bash(cp-verdict:*)"
+          "Bash(cp-verdict:*)",
+          "Bash(head:*)",
+          "Bash(tail:*)",
+          "Bash(wc:*)",
+          "Bash(sort:*)",
+          "Bash(uniq:*)",
+          "Bash(cut:*)",
+          "Bash(nl:*)",
+          "Bash(cat:*)",
+          "Bash(column:*)",
+          "Bash(grep:*)"
         ],
         "denied": [
           "Bash(git merge:*)",
@@ -82,7 +118,23 @@
           "Bash(br:*)",
           "ToolSearch",
           "Task",
-          "Agent"
+          "Agent",
+          "Bash(sed:*)",
+          "Bash(awk:*)",
+          "Bash(perl:*)",
+          "Bash(python:*)",
+          "Bash(python3:*)",
+          "Bash(ruby:*)",
+          "Bash(node:*)",
+          "Bash(xargs:*)",
+          "Bash(tee:*)",
+          "Bash(dd:*)",
+          "Bash(install:*)",
+          "Bash(chmod:*)",
+          "Bash(curl:*)",
+          "Bash(wget:*)",
+          "Bash(nc:*)",
+          "Bash(ssh:*)"
         ]
       }
     },
@@ -118,7 +170,17 @@
           "Bash(git diff:*)",
           "Bash(git show:*)",
           "Bash(git log:*)",
-          "Bash(cp-verdict:*)"
+          "Bash(cp-verdict:*)",
+          "Bash(head:*)",
+          "Bash(tail:*)",
+          "Bash(wc:*)",
+          "Bash(sort:*)",
+          "Bash(uniq:*)",
+          "Bash(cut:*)",
+          "Bash(nl:*)",
+          "Bash(cat:*)",
+          "Bash(column:*)",
+          "Bash(grep:*)"
         ],
         "denied": [
           "Edit",
@@ -132,7 +194,23 @@
           "Bash(br:*)",
           "ToolSearch",
           "Task",
-          "Agent"
+          "Agent",
+          "Bash(sed:*)",
+          "Bash(awk:*)",
+          "Bash(perl:*)",
+          "Bash(python:*)",
+          "Bash(python3:*)",
+          "Bash(ruby:*)",
+          "Bash(node:*)",
+          "Bash(xargs:*)",
+          "Bash(tee:*)",
+          "Bash(dd:*)",
+          "Bash(install:*)",
+          "Bash(chmod:*)",
+          "Bash(curl:*)",
+          "Bash(wget:*)",
+          "Bash(nc:*)",
+          "Bash(ssh:*)"
         ],
         "_why": "A judge that can edit what it is judging is not a judge. Note it cannot run ./verify either: the gate already ran on the edge behind it, and a Reviewer that re-runs the gate is judging its own rerun."
       }
@@ -162,7 +240,17 @@
           "Bash(br show:*)",
           "Bash(br ready:*)",
           "Bash(br dep:*)",
-          "Bash(cp-verdict:*)"
+          "Bash(cp-verdict:*)",
+          "Bash(head:*)",
+          "Bash(tail:*)",
+          "Bash(wc:*)",
+          "Bash(sort:*)",
+          "Bash(uniq:*)",
+          "Bash(cut:*)",
+          "Bash(nl:*)",
+          "Bash(cat:*)",
+          "Bash(column:*)",
+          "Bash(grep:*)"
         ],
         "denied": [
           "Edit",
@@ -174,7 +262,23 @@
           "Bash(git commit:*)",
           "ToolSearch",
           "Task",
-          "Agent"
+          "Agent",
+          "Bash(sed:*)",
+          "Bash(awk:*)",
+          "Bash(perl:*)",
+          "Bash(python:*)",
+          "Bash(python3:*)",
+          "Bash(ruby:*)",
+          "Bash(node:*)",
+          "Bash(xargs:*)",
+          "Bash(tee:*)",
+          "Bash(dd:*)",
+          "Bash(install:*)",
+          "Bash(chmod:*)",
+          "Bash(curl:*)",
+          "Bash(wget:*)",
+          "Bash(nc:*)",
+          "Bash(ssh:*)"
         ],
         "_why": "It files work; it does not do the work and it does not close it."
       }
@@ -202,7 +306,17 @@
           "Glob",
           "Bash(br create:*)",
           "Bash(br show:*)",
-          "Bash(cp-verdict:*)"
+          "Bash(cp-verdict:*)",
+          "Bash(head:*)",
+          "Bash(tail:*)",
+          "Bash(wc:*)",
+          "Bash(sort:*)",
+          "Bash(uniq:*)",
+          "Bash(cut:*)",
+          "Bash(nl:*)",
+          "Bash(cat:*)",
+          "Bash(column:*)",
+          "Bash(grep:*)"
         ],
         "denied": [
           "Edit",
@@ -214,7 +328,23 @@
           "Bash(git commit:*)",
           "ToolSearch",
           "Task",
-          "Agent"
+          "Agent",
+          "Bash(sed:*)",
+          "Bash(awk:*)",
+          "Bash(perl:*)",
+          "Bash(python:*)",
+          "Bash(python3:*)",
+          "Bash(ruby:*)",
+          "Bash(node:*)",
+          "Bash(xargs:*)",
+          "Bash(tee:*)",
+          "Bash(dd:*)",
+          "Bash(install:*)",
+          "Bash(chmod:*)",
+          "Bash(curl:*)",
+          "Bash(wget:*)",
+          "Bash(nc:*)",
+          "Bash(ssh:*)"
         ],
         "_why": "Anything it finds becomes an issue, not a notification."
       }
@@ -234,7 +364,8 @@
       "--fork-session",
       "--append-system-prompt",
       "--dangerously-skip-permissions",
-      "--allow-dangerously-skip-permissions"
+      "--allow-dangerously-skip-permissions",
+      "--bare"
     ],
     "_banned_why": "--resume/--continue/--fork-session are the literal inherit-the-transcript flags; a node that resumes is not a node. --append-system-prompt leaves the default agent prompt underneath, with behaviours nobody chose or audited. The skip-permissions pair would make the tool policy advisory.",
     "required_flags": [
@@ -248,6 +379,9 @@
     "cwd_must_leave_project": true,
     "_cwd_why": "Measured, not assumed. Auto-memory is keyed by project path: a headless run inside /mnt/projects/control-plane receives the operator's MEMORY.md index verbatim, which is Builder-authored free text arriving in the Reviewer's context. --system-prompt does not close it and neither does --setting-sources ''; --bare does, but --bare cannot authenticate on an OAuth subscription ('Not logged in'), and nodes run on Claude Code rather than an API key. Changing cwd to the node's own worktree closes it.",
     "_tools_comment": "Deny by default: a tool absent from `allowed` is not granted, and `denied` names the ones that must never be granted even by a careless widening of the allowlist. The PreToolUse hook (bin/cp-guard) sits behind both, so a gap in one is not a gap in both. Allowlists are sub-tool scoped \u2014 Bash(git diff:*) grants exactly that, not Bash \u2014 which is what makes the policy enforceable rather than advisory.",
-    "_escalation_comment": "ToolSearch, Task and Agent are denied at every node because they are the tools that grant other tools. A node that can spawn a subagent gets an agent with default tools, which is the whole policy bypassed in one call. Observed: a Reviewer asked to edit a file did not attempt Edit \u2014 it attempted ToolSearch to go and get Edit."
+    "_escalation_comment": "ToolSearch, Task and Agent are denied at every node because they are the tools that grant other tools. A node that can spawn a subagent gets an agent with default tools, which is the whole policy bypassed in one call. Observed: a Reviewer asked to edit a file did not attempt Edit \u2014 it attempted ToolSearch to go and get Edit.",
+    "_readers_comment": "Read-only filters are granted so a node can do ordinary work \u2014 piping a diff through head is not an escalation. The writers and interpreters beside them are denied explicitly: sed -i edits in place, awk and the interpreters run arbitrary code, and tee and xargs are writes wearing a filter's clothes. Granting neither was worse than it sounds: a Reviewer denied its own cp-verdict call reworded the finding until it got through.",
+    "backend": "claude-code-oauth",
+    "_backend_why": "Nodes run on Claude Code with the interactive session's own authentication, not on an API key: subscription usage rather than metered spend, and no second credential. Proven end to end \u2014 a Reviewer under the full flag set reviewed a real diff and emitted a valid verdict with no key present. This is why --bare is banned rather than merely unused: under --bare, auth is strictly ANTHROPIC_API_KEY or apiKeyHelper and OAuth is never read."
   }
 }

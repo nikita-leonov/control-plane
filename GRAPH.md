@@ -224,6 +224,29 @@ a list of flags, and a contract made of flags is worth only as much as the
 checking behind it: each one above was probed against the installed CLI rather
 than taken from documentation.
 
+The manifest goes on **stdin**. `claude -p <text>` takes a prompt, so passing the
+manifest's path as an argument hands the node the literal string
+`/path/to/manifest.json` and nothing else — which looks like a working launch
+right up until the node has no idea what it is reviewing.
+
+### Nodes run on Claude Code, not on an API key
+
+This is a decision, and it constrains the flags above. Every node is a
+`claude -p` invocation authenticated the same way an interactive session is, so
+running the factory costs subscription usage rather than metered API spend and
+there is no second credential to hold.
+
+It has been run end to end: a Reviewer launched with the full flag set above,
+against a real worktree and a real diff, read the change, found the defect that
+was planted in it, and emitted a `reject` verdict through `cp-verdict` that
+validated against the contract. No API key was involved.
+
+The one casualty is `--bare`, which would otherwise be the tidiest way to close
+the memory channel: under `--bare`, Anthropic auth is strictly `ANTHROPIC_API_KEY`
+or `apiKeyHelper`, and OAuth is never read — it fails with *"Not logged in."*
+Redirecting `CLAUDE_CONFIG_DIR` fails identically, since the credentials live
+there too. Hence the worktree: the way to close that channel without a key.
+
 The contract is data, not prose: `nodes/node-types.json` holds `launch`
 (the banned and required flag lists) and each node's `inputs` whitelist, and
 `tests/test_manifest.py` asserts the runner's argv against those lists rather

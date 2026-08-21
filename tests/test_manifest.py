@@ -180,6 +180,23 @@ class TheLaunchArgv(unittest.TestCase):
         and a Reviewer that can send email is not a Reviewer."""
         self.assertIn("--strict-mcp-config", self.argv())
 
+    def test_the_manifest_is_not_passed_as_a_prompt(self):
+        """`claude -p <text>` takes a prompt, not a path. Passing the manifest
+        path as a positional handed the node the literal string
+        "/path/to/manifest.json" — it goes on stdin. Measured against the real
+        CLI, not assumed."""
+        argv = self.argv()
+        self.assertFalse(any(a.endswith(".json") and "manifest" in a for a in argv),
+                         "the manifest must not be an argument; it is stdin")
+
+    def test_the_node_can_resolve_cp_verdict(self):
+        """The allowlist grants `Bash(cp-verdict:*)` — a bare command name. If it
+        does not resolve, the node has no way to advance at all."""
+        env = cprun.env_for_node({"token": "t-x", "factory": "control-plane",
+                                  "run": 1, "seen": {}}, "reviewer")
+        self.assertIn(str(ROOT / "bin"), env["PATH"])
+        self.assertTrue(env["CP_VERDICT_OUT"].endswith("verdict-t-x.json"))
+
     def test_the_filesystem_boundary_is_the_worktree(self):
         argv = self.argv()
         self.assertIn("--add-dir", argv)

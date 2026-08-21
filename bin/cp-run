@@ -172,8 +172,10 @@ def build_launch_argv(node, manifest_path, worktree, types, output="json"):
             "--disallowedTools", ",".join(tools["denied"]),
             "--add-dir", str(worktree),
             "--settings", str(settings),
-            "--output-format", output,
-            str(manifest_path)]
+            "--output-format", output]
+    # The manifest goes on STDIN, not as a positional. `claude -p <text>` takes a
+    # prompt, so passing the path would hand the node the literal string
+    # "/path/to/manifest.json" and nothing else — measured, not assumed.
 
     # The contract, enforced against its own output rather than trusted. A flag
     # added by a careless edit is caught here, not in a live run.
@@ -191,6 +193,10 @@ def env_for_node(tok, node):
     """What the launched process gets. CP_NODE is load-bearing: without it the
     PreToolUse hook refuses every call rather than guessing a policy."""
     return {**os.environ,
+            # cp-verdict is how a node advances, and the allowlist grants it as
+            # `Bash(cp-verdict:*)` — a bare command name, so it has to resolve.
+            "PATH": f"{ROOT / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
+            "CP_VERDICT_OUT": str(STATE / f"verdict-{tok['token']}.json"),
             "CP_NODE": node,
             "CP_TOKEN": tok["token"],
             "CP_FACTORY": tok["factory"],

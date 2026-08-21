@@ -123,6 +123,48 @@ class MatchingIsNotStringPrefixing(unittest.TestCase):
     def test_an_empty_command_is_not_a_free_pass(self):
         self.assertFalse(cpg.decide("reviewer", "Bash", "")[0])
 
+    def test_a_separator_inside_quotes_is_data_not_an_operator(self):
+        """The one that mattered. A real Reviewer's verdict payload described an
+        `&` that should be a `|`; the guard split the JSON on those characters,
+        refused the call, and the node reworded its finding until it got through
+        — so the guard silently edited what a judge was able to say.
+        (cp-guard-quoting-m0m)"""
+        payload = ('cp-verdict emit --node reviewer --verdict reject --payload '
+                   '\'{"findings":[{"file":"a.py","summary":"seen | terms should be '
+                   'seen & terms; see line 3"}]}\'')
+        ok, why = cpg.decide("reviewer", "Bash", payload)
+        self.assertTrue(ok, f"a node could not emit its own verdict: {why}")
+
+    def test_a_node_can_always_emit_a_verdict_whatever_it_says(self):
+        """A node that cannot emit is a token that cannot advance. The payload is
+        arbitrary text by construction, so it must never be able to trip the guard."""
+        for summary in ("a && b", "x | y", "cost is $(price)", "back`tick`",
+                        "semi; colon", "quote \" inside"):
+            body = json.dumps({"findings": [{"file": "a.py", "summary": summary}]})
+            cmd = f"cp-verdict emit --node reviewer --verdict reject --payload {body!r}"
+            ok, why = cpg.decide("reviewer", "Bash", cmd)
+            self.assertTrue(ok, f"payload {summary!r} was refused: {why}")
+
+    def test_every_segment_must_be_allowed_by_something(self):
+        """Requiring all segments to match the SAME pattern refused
+        `git show X | head`, where both halves are innocuous."""
+        self.assertTrue(cpg.decide("reviewer", "Bash", "git show abc:f.py | head -50")[0])
+        self.assertTrue(cpg.decide("reviewer", "Bash", "git diff | grep -n x | head")[0])
+        self.assertFalse(cpg.decide("reviewer", "Bash", "git diff | rm -rf .")[0])
+
+    def test_filters_that_write_or_execute_stay_denied(self):
+        """head and wc read. sed -i edits in place, awk runs code, tee is a write
+        wearing a filter's clothes."""
+        for cmd in ("git diff | sed -i s/a/b/ f.py", "git diff | awk '{system(\"rm x\")}'",
+                    "git diff | tee /tmp/x", "git diff | xargs rm",
+                    "git diff | python3 -c 'import os'"):
+            self.assertFalse(cpg.decide("reviewer", "Bash", cmd)[0], f"{cmd} was allowed")
+
+    def test_an_unparseable_command_is_denied_rather_than_guessed(self):
+        ok, why = cpg.decide("reviewer", "Bash", "git diff 'unbalanced")
+        self.assertFalse(ok)
+        self.assertIn("unparseable", why)
+
 
 class TheHookIsTheBackstop(unittest.TestCase):
     def test_a_denied_call_is_blocked(self):
