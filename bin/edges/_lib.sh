@@ -20,6 +20,12 @@
 #   CP_BASE                              the commit the work started from
 #
 # No edge invokes a model. That is asserted by a test rather than left as a rule.
+#
+# Every mutating edge calls edge_no_dry_run first. The runner already swaps a
+# no-op in for these during a dry run, so this is the second lock on the same
+# door — and the reason for two is that the first one used to key off the edge's
+# working directory, which happened to cover the stubs and would have stopped
+# covering them the day they became real.
 
 set -uo pipefail
 
@@ -34,6 +40,14 @@ edge_needs() {
   for v in "$@"; do
     [ -n "${!v:-}" ] || edge_broken "$v is not set — the runner did not supply it"
   done
+}
+
+# A mutating edge reached during a dry run means the runner's guard did not fire.
+# That is the guard being broken, not the work failing, so it exits 2 — and it
+# exits before touching anything.
+edge_no_dry_run() {
+  [ -z "${CP_DRY_RUN:-}" ] || edge_broken \
+    "reached during a dry run — a dry run must not be able to touch a repo"
 }
 
 # Read a field out of the node result. The result is the edge's input; an edge

@@ -19,6 +19,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 g = json.loads((ROOT / "nodes" / "graph.json").read_text())
 EDGES = ROOT / "bin" / "edges"
 bad = []
+# Where a person is the destination. Two exits may share one of these — both
+# genuinely need a human — as long as the token arrives saying which it was.
+HUMAN_TERMINALS = {n for n, t in g["terminals"].items() if t.get("kind") == "human"}
 
 # A model on an edge is a model in the router, which is the one thing this design
 # exists to remove. Checked over the files, not asserted in a comment.
@@ -55,10 +58,20 @@ for name, spec in g["edges"].items():
         if str(code) not in routes:
             bad.append(f"edge {name}: can exit {code} but nothing routes it — "
                        "a token would stop somewhere nobody designed")
-    # The one conflation the contract names explicitly.
-    if 1 in exits and 2 in exits and routes.get("1") == routes.get("2"):
-        bad.append(f"edge {name}: exit 2 routes where exit 1 does ({routes.get('1')}) — "
-                   "a broken gate must not look like a red one")
+    # The one conflation the contract names explicitly. What has to be true is
+    # not that the two targets differ — sometimes both genuinely need a person —
+    # but that a broken edge is never handed to something that will retry it as
+    # though the work had merely failed.
+    if 2 in exits:
+        dest2 = routes.get("2")
+        if dest2 and not str(dest2).startswith("@"):
+            bad.append(f"edge {name}: exit 2 routes to {dest2!r}, a node — "
+                       "a repair node handed a broken edge would 'fix' code that "
+                       "was never the problem")
+        if 1 in exits and routes.get("1") == dest2 and dest2 not in HUMAN_TERMINALS:
+            bad.append(f"edge {name}: exit 2 routes where exit 1 does ({dest2}) and "
+                       "that is not a human terminal — a broken gate must not look "
+                       "like a red one")
 
 # Every file in bin/edges is scanned, not only the ones graph.json names. The
 # shared library is a file every edge sources, so a model call in there is a

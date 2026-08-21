@@ -1,5 +1,33 @@
 #!/usr/bin/env bash
-# close — an edge. Deterministic, no model, exit code selects the outgoing branch.
-# Stub until cp-edge-scripts-zow; the contract it exits by is already real.
+# close — mark the work done in the factory's own tracker.
+#
+# If beads refuses because something still blocks the issue, that is beads being
+# right and it is not this edge's business to argue. The token goes to a person
+# with the tracker's own reason, rather than being forced through.
 . "$(dirname "$(readlink -f "$0")")/_lib.sh"
-edge_ok "edge close: token=${CP_TOKEN:-?} factory=${CP_FACTORY:-?}"
+edge_no_dry_run
+edge_needs CP_TOKEN CP_FACTORY
+
+# Where the runner put us — see graph.json's cwd for this edge.
+REPO=$(pwd)
+command -v br >/dev/null 2>&1 || edge_broken "br is not on PATH"
+[ -d "$REPO/.beads" ] || edge_broken "$CP_FACTORY has no tracker (.beads) at $REPO"
+
+# br show --json returns a LIST of issues, not one object. Reading it as an
+# object failed silently and reported a real issue as missing, which would have
+# parked every token at the last edge before done.
+STATUS=$(br show "$CP_TOKEN" --json 2>/dev/null | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+rows=d if isinstance(d,list) else [d]
+print(rows[0].get('status','') if rows else '')" 2>/dev/null)
+[ -n "$STATUS" ] || edge_broken "$CP_TOKEN is not an issue in $CP_FACTORY"
+if [ "$STATUS" = "closed" ]; then
+  edge_ok "close: $CP_TOKEN was already closed"      # idempotent: replay is safe
+fi
+
+OUT=$(br close "$CP_TOKEN" --reason "Merged by the control plane (run ${CP_RUN:-1})" 2>&1) \
+  || edge_failed "the tracker refused to close $CP_TOKEN:
+$(printf '%s\n' "$OUT" | sed 's/^/    /')"
+
+edge_ok "close: $CP_TOKEN closed in $CP_FACTORY"

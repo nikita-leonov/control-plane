@@ -267,12 +267,19 @@ def run_node(tok, node, graph, types, args):
 
 def cross(edge_name, edge, tok, factory, args):
     """Run an edge script and return its exit code. No model involved, ever."""
-    cwd = PROJECTS / factory if edge.get("cwd") == "factory" else ROOT
+    where = edge.get("cwd")
+    cwd = {"factory": PROJECTS / factory,
+           "worktree": worktree_for(tok)}.get(where, ROOT)
     cmd = list(edge["run"])
-    if edge.get("cwd") != "factory":
+    if where != "factory":
         cmd[0] = str(ROOT / cmd[0])
-    if args.dry_run and edge.get("cwd") == "factory":
-        cmd = [str(ROOT / "bin" / "edges" / "noop")]      # do not touch a real repo
+
+    # A dry run must be incapable of touching a repo. The test is what the edge
+    # DOES, declared in the graph — not where it runs. Keying this off the
+    # working directory is what it used to do, which covered the stubs by
+    # accident and would have stopped covering them the day they became real.
+    if args.dry_run and (edge.get("mutates") or where == "factory"):
+        cmd = [str(ROOT / "bin" / "edges" / "noop")]
         cwd = ROOT
     t0 = time.time()
     try:
@@ -286,10 +293,17 @@ def cross(edge_name, edge, tok, factory, args):
                                 "CP_EDGE": edge_name, "CP_RUN": str(tok.get("run", 1)),
                                 "CP_RESULT": str(STATE / "verdict.json"),
                                 "CP_WORKTREE": str(worktree_for(tok)),
-                                "CP_BASE": tok.get("base") or ""})
+                                "CP_BASE": tok.get("base") or "",
+                                # The second lock. Every mutating edge checks it
+                                # itself, so the swap above failing is not enough
+                                # for a dry run to reach a repo.
+                                **({"CP_DRY_RUN": "1"} if args.dry_run else {})})
         rc = r.returncode
-    except FileNotFoundError:
-        die(f"edge {edge_name!r} has no script at {cmd[0]}", 2)
+    except (FileNotFoundError, NotADirectoryError):
+        if not pathlib.Path(cmd[0]).exists():
+            die(f"edge {edge_name!r} has no script at {cmd[0]}", 2)
+        die(f"edge {edge_name!r} cannot run in {cwd} — it does not exist "
+            "(cp-node-worktrees-do1)", 2)
     except subprocess.TimeoutExpired:
         rc = 1
     return rc, int((time.time() - t0) * 1000)
@@ -308,7 +322,20 @@ def advance(tok, graph, types, args):
         pos = tok["node"]
 
         if pos in graph["terminals"]:
-            tok["status"] = graph["terminals"][pos]["kind"]
+            term = graph["terminals"][pos]
+            if term["kind"] == "human":
+                # A token that arrives at a human terminal by ROUTE, rather than
+                # by a verdict that parks, still has to be a decision someone can
+                # see. Without a question it lands with a status the panel does
+                # not render and drops out of the queue entirely — which is the
+                # failure the panel exists to prevent, wearing the panel's own
+                # clothes.
+                tok["status"] = "parked"
+                if not tok.get("question"):
+                    tok["question"] = arrival_question(tok)
+                tok["parked_from"] = tok.get("prev_vertex", pos)
+            else:
+                tok["status"] = term["kind"]
             return save(tok)
 
         if pos in graph["edges"]:             # mid-transition, keep going
@@ -344,6 +371,42 @@ def advance(tok, graph, types, args):
             return save(tok)
 
     die("graph did not settle in 200 steps", 2)
+
+
+def arrival_question(tok):
+    """The question a token asks when an edge routed it to a person.
+
+    The exit code is the whole point of the wording. 1 is the work failing and
+    retrying is sensible; 2 is the edge itself being broken, where retrying is
+    the wrong instinct and doing it repeatedly is how an afternoon disappears.
+    This is where "2 must never look like 1" stops being a routing rule and
+    becomes something a person reads.
+    """
+    edge, rc = tok.get("arrived_via") or ("?", None)
+    if rc == 2:
+        return {
+            "asks": f"Edge `{edge}` is broken (exit 2) — the edge itself, not the work. "
+                    f"{tok['token']} cannot go on until it is fixed.",
+            "options": [
+                {"value": "retry", "means": f"the edge is fixed; cross `{edge}` again",
+                 "edge": edge},
+                {"value": "drop", "means": "stop working this token", "edge": "@park"}],
+        }
+    if rc == 0:
+        return {
+            "asks": f"`{tok['token']}` crossed `{edge}` cleanly and the graph routes it "
+                    "to you from there. Carry on, or stop here?",
+            "options": [
+                {"value": "go", "means": f"cross `{edge}` again and continue", "edge": edge},
+                {"value": "hold", "means": "leave it here for now", "edge": "@park"}],
+        }
+    return {
+        "asks": f"Edge `{edge}` failed (exit {rc}) for {tok['token']}. Retry it, "
+                "or stop working this token?",
+        "options": [
+            {"value": "retry", "means": f"cross `{edge}` again", "edge": edge},
+            {"value": "drop", "means": "stop working this token", "edge": "@park"}],
+    }
 
 
 def do_edge(tok, edge_name, graph, factory, args, from_node, verdict, manifest=None):
@@ -410,6 +473,7 @@ def do_edge(tok, edge_name, graph, factory, args, from_node, verdict, manifest=N
             **({"manifest": manifest} if manifest else {})}, tok)
     tok["prev_vertex"] = edge_name
     tok["node"] = to
+    tok["arrived_via"] = (edge_name, rc)     # so a human terminal can say why
     save(tok)
     return rc, ms
 

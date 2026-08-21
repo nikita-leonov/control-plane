@@ -24,15 +24,19 @@
       "run": [
         "bin/edges/commit"
       ],
-      "cwd": "control-plane",
+      "cwd": "worktree",
       "routes": {
         "0": "reviewer",
-        "1": "@park"
+        "1": "to-repair",
+        "2": "@park"
       },
       "_note": "The chunking plan is judgment and came from the Builder. Executing it is not, so it happens here.",
       "exits": [
-        0
-      ]
+        0,
+        1,
+        2
+      ],
+      "mutates": true
     },
     "verify-full": {
       "run": [
@@ -68,27 +72,35 @@
       "run": [
         "bin/edges/merge"
       ],
-      "cwd": "control-plane",
+      "cwd": "factory",
       "routes": {
         "0": "close",
-        "1": "@park"
+        "1": "to-repair",
+        "2": "@park"
       },
       "exits": [
-        0
-      ]
+        0,
+        1,
+        2
+      ],
+      "mutates": true
     },
     "close": {
       "run": [
         "bin/edges/close"
       ],
-      "cwd": "control-plane",
+      "cwd": "factory",
       "routes": {
         "0": "@done",
-        "1": "@park"
+        "1": "@park",
+        "2": "@park"
       },
       "exits": [
-        0
-      ]
+        0,
+        1,
+        2
+      ],
+      "mutates": true
     },
     "ready": {
       "run": [

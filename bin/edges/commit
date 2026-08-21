@@ -1,5 +1,72 @@
 #!/usr/bin/env bash
-# commit — an edge. Deterministic, no model, exit code selects the outgoing branch.
-# Stub until cp-edge-scripts-zow; the contract it exits by is already real.
+# commit — turn the Builder's chunking plan into commits.
+#
+# The plan is judgment and came from a node. Executing it is not, so it happens
+# here. The plan is also a contract: this edge commits exactly the paths it
+# names, and refuses if the worktree changed anything it did not. A node that
+# touched more than it declared is a finding, not something to tidy up silently
+# on its way past.
 . "$(dirname "$(readlink -f "$0")")/_lib.sh"
-edge_ok "edge commit: token=${CP_TOKEN:-?} factory=${CP_FACTORY:-?}"
+edge_no_dry_run
+edge_needs CP_TOKEN CP_RESULT CP_WORKTREE CP_BASE
+
+[ -d "$CP_WORKTREE/.git" ] || [ -f "$CP_WORKTREE/.git" ] \
+  || edge_broken "no git worktree at $CP_WORKTREE (cp-node-worktrees-do1)"
+cd "$CP_WORKTREE" || edge_broken "cannot enter $CP_WORKTREE"
+
+git rev-parse --verify "$CP_BASE^{commit}" >/dev/null 2>&1 \
+  || edge_broken "base commit $CP_BASE is not in this repo"
+
+PLAN=$(python3 - "$CP_RESULT" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception as e:
+    sys.stderr.write(f"unreadable node result: {e}\n"); sys.exit(2)
+commits = (d.get("payload") or {}).get("commits")
+if not commits:
+    sys.stderr.write("node result carries no chunking plan\n"); sys.exit(2)
+for c in commits:
+    files = c.get("files") or []
+    if not files:
+        sys.stderr.write(f"plan entry {c.get('message','?')!r} names no files\n"); sys.exit(2)
+    # NUL-free, newline-free record: message on one line, then its files.
+    print("\x1e".join([c["message"].replace("\n", " ")] + files))
+PY
+) || edge_broken "cannot read the chunking plan from $CP_RESULT"
+
+# Everything the plan is allowed to touch, before a single commit is made.
+DECLARED=$(printf '%s\n' "$PLAN" | while IFS= read -r line; do
+             printf '%s\n' "$line" | tr $'\x1e' '\n' | tail -n +2
+           done | sort -u)
+ACTUAL=$(git status --porcelain --untracked-files=all | sed 's/^...//' | sort -u)
+
+UNDECLARED=$(comm -13 <(printf '%s\n' "$DECLARED") <(printf '%s\n' "$ACTUAL"))
+if [ -n "$UNDECLARED" ]; then
+  edge_failed "the worktree changed paths the plan did not name:
+$(printf '%s\n' "$UNDECLARED" | sed 's/^/    /')
+  the plan is the contract — a node that touched more than it declared is a finding"
+fi
+
+N=0
+while IFS= read -r line; do
+  [ -n "$line" ] || continue
+  MSG=$(printf '%s' "$line" | cut -d$'\x1e' -f1)
+  FILES=$(printf '%s' "$line" | tr $'\x1e' '\n' | tail -n +2)
+
+  printf '%s\n' "$FILES" | while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    git add -- "$f" 2>/dev/null || true      # a deleted path still stages
+  done
+
+  git diff --cached --quiet && edge_failed "plan entry '$MSG' stages nothing"
+  git -c "user.name=control-plane" -c "user.email=cp@localhost" \
+      commit --no-verify -q -m "$MSG" \
+    || edge_failed "commit failed for '$MSG'"
+  N=$((N + 1))
+done <<< "$PLAN"
+
+git diff --quiet && git diff --cached --quiet \
+  || edge_failed "the worktree is not clean after committing the whole plan"
+
+edge_ok "commit: $N commit(s) from the plan, base ${CP_BASE:0:12}"

@@ -150,8 +150,28 @@ the contract, or if any file under `bin/edges/` mentions a model — the shared
 library included, since it is the one file a reference-following check would
 skip and a model call there is a model call on every edge.
 
-**The edge scripts themselves are still stubs** that exit 0 without touching a
-repo, which is why every dry run looks so clean (`cp-edge-scripts-zow`).
+`commit`, `merge` and `close` are real now, and they are the first code here that
+touches a repository. Three things about them are worth stating, because each is
+a way the graph could have been quietly wrong:
+
+**The plan is a contract, not a suggestion.** `commit` stages exactly the paths
+the Builder's chunking plan names, one commit per entry with that entry's
+message, and *refuses* if the worktree changed anything the plan did not declare.
+Committing the extra file would make every later claim about what a change
+contains untrue, so an undeclared path is a finding — exit 1, routed to repair —
+rather than something tidied up on the way past.
+
+**A dry run must be incapable of touching a repo**, and that is now two locks.
+The runner substitutes a no-op for any edge declared `mutates` in the graph, and
+every mutating script refuses again on its own if it sees `CP_DRY_RUN`. Two,
+because the old single lock keyed off the edge's *working directory* — which
+covered the stubs by accident and would have stopped covering them the day they
+became real. What an edge does is now declared, not inferred.
+
+**Exit 2 is where it matters most.** A missing worktree, a base commit the repo
+does not have, an unreadable plan, a tracker that is not there: all `edge_broken`,
+never `edge_failed`. Sending any of them to a repair node would produce an agent
+confidently editing code that was never the problem.
 
 ## A node's interior is unconstrained
 
@@ -441,6 +461,8 @@ script gating a transition, built before the model above was written down:
 | `./verify` (0 / 1 / 2) | the gate edge, with a three-way typed verdict |
 | `bin/verify-all` | the same edge across all factories, one exit code |
 | `bin/edges/_lib.sh` | the exit-code contract every edge script sources |
+| `bin/edges/commit` | the chunking plan executed, and refused if it does not match |
+| `bin/edges/merge` / `close` | the real branch and the real tracker |
 | `.githooks/pre-push` | the only **enforced** edge |
 | `tools/lint_ratchet.py` + baseline | an edge carrying state across crossings |
 

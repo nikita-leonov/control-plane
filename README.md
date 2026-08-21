@@ -47,7 +47,7 @@ factory/     the shared parts of a factory repo — ./verify template + generato
 nodes/       the contract — verdict schema, input manifest, per-node enums and
              tool policy, graph
 bin/         cp, cp-run, cp-verdict, cp-manifest, cp-guard, verify-all;
-             edges/ are transitions
+             edges/ are transitions — commit, merge and close touch real repos
 web/         the panel cp serve renders
 tools/       checks used by ./verify
 state/       generated; what the panel reads
