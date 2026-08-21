@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # commit — an edge. Deterministic, no model, exit code selects the outgoing branch.
-# Stub while the runner is being proven end to end; the real one lands with
-# cp-edge-contract-vm6.
-echo "edge commit: token=${CP_TOKEN:-?} factory=${CP_FACTORY:-?}"
-exit 0
+# Stub until cp-edge-scripts-zow; the contract it exits by is already real.
+. "$(dirname "$(readlink -f "$0")")/_lib.sh"
+edge_ok "edge commit: token=${CP_TOKEN:-?} factory=${CP_FACTORY:-?}"

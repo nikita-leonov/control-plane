@@ -99,6 +99,11 @@ sys.exit(1 if bad else 0)"
 # a factory, by which point the useful information is gone. Cheap to check here.
 check "graph"       fast python3 tools/check-graph.py
 
+# The graph rests on edges being deterministic scripts whose exit code selects
+# the branch. An edge that shells out to a model, or returns a code nothing
+# routes, breaks that while still looking like a working script.
+check "edges"       fast python3 tools/check-edges.py
+
 # GRAPH.md promises that nothing is described without an issue behind it. That
 # rule was enforced by hand until it became this.
 check "issue refs"  full python3 tools/check-issue-refs.py

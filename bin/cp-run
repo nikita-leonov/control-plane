@@ -95,6 +95,16 @@ def read_token(tid):
     return json.loads(p.read_text())
 
 
+def head_of(factory):
+    """The commit a token's work starts from, resolved once."""
+    try:
+        r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(PROJECTS / factory),
+                           capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def worktree_for(tok):
     """Where this node runs. Outside the project — see WORKTREES."""
     return WORKTREES / tok["factory"] / tok["token"]
@@ -266,9 +276,17 @@ def cross(edge_name, edge, tok, factory, args):
         cwd = ROOT
     t0 = time.time()
     try:
+        # What an edge is given. It is a pure function of (node result, repo at a
+        # known commit), so both have to arrive explicitly rather than be
+        # rediscovered by the script — a script that goes looking is a script
+        # whose input nobody can write down.
         r = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, timeout=600,
-                           env={**os.environ, "CP_TOKEN": tok["token"], "CP_FACTORY": factory,
-                                "CP_EDGE": edge_name})
+                           env={**os.environ,
+                                "CP_TOKEN": tok["token"], "CP_FACTORY": factory,
+                                "CP_EDGE": edge_name, "CP_RUN": str(tok.get("run", 1)),
+                                "CP_RESULT": str(STATE / "verdict.json"),
+                                "CP_WORKTREE": str(worktree_for(tok)),
+                                "CP_BASE": tok.get("base") or ""})
         rc = r.returncode
     except FileNotFoundError:
         die(f"edge {edge_name!r} has no script at {cmd[0]}", 2)
@@ -462,7 +480,11 @@ def main():
     tok = {"token": a.token, "factory": a.factory, "node": graph["entry"],
            "status": "running", "attempts": {}, "seen": {}, "run": run_no,
            "started": now(), "updated": now(), "dry_run": a.dry_run,
-           "scenario": a.scenario if a.dry_run else None}
+           "scenario": a.scenario if a.dry_run else None,
+           # The known commit half of "pure function of (node result, repo at a
+           # known commit)". Recorded once at the start: an edge that resolved
+           # HEAD itself would be a different function on every crossing.
+           "base": head_of(a.factory)}
     save(tok)
     advance(tok, graph, types, a)
     print(f"  {tok['token']}: {tok['status']} at {tok['node']}")

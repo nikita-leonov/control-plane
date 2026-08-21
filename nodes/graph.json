@@ -13,7 +13,12 @@
         "1": "to-repair",
         "2": "@park"
       },
-      "_note": "exit 2 is the gate itself being broken. It never routes to repair \u2014 a repair node handed an unrunnable gate would 'fix' code that was never the problem."
+      "_note": "exit 2 is the gate itself being broken. It never routes to repair \u2014 a repair node handed an unrunnable gate would 'fix' code that was never the problem.",
+      "exits": [
+        0,
+        1,
+        2
+      ]
     },
     "commit": {
       "run": [
@@ -24,7 +29,10 @@
         "0": "reviewer",
         "1": "@park"
       },
-      "_note": "The chunking plan is judgment and came from the Builder. Executing it is not, so it happens here."
+      "_note": "The chunking plan is judgment and came from the Builder. Executing it is not, so it happens here.",
+      "exits": [
+        0
+      ]
     },
     "verify-full": {
       "run": [
@@ -35,7 +43,12 @@
         "0": "merge",
         "1": "to-repair",
         "2": "@park"
-      }
+      },
+      "exits": [
+        0,
+        1,
+        2
+      ]
     },
     "to-repair": {
       "run": [
@@ -46,7 +59,10 @@
       "routes": {
         "0": "repair"
       },
-      "_note": "Attempt count is edge state carried in the token. Exhausting the budget routes to a human node \u2014 an edge, not an exception."
+      "_note": "Attempt count is edge state carried in the token. Exhausting the budget routes to a human node \u2014 an edge, not an exception.",
+      "exits": [
+        0
+      ]
     },
     "merge": {
       "run": [
@@ -56,7 +72,10 @@
       "routes": {
         "0": "close",
         "1": "@park"
-      }
+      },
+      "exits": [
+        0
+      ]
     },
     "close": {
       "run": [
@@ -66,7 +85,10 @@
       "routes": {
         "0": "@done",
         "1": "@park"
-      }
+      },
+      "exits": [
+        0
+      ]
     },
     "ready": {
       "run": [
@@ -75,7 +97,10 @@
       "cwd": "control-plane",
       "routes": {
         "0": "@done"
-      }
+      },
+      "exits": [
+        0
+      ]
     },
     "done": {
       "run": [
@@ -84,7 +109,10 @@
       "cwd": "control-plane",
       "routes": {
         "0": "@done"
-      }
+      },
+      "exits": [
+        0
+      ]
     }
   },
   "terminals": {
@@ -113,5 +141,6 @@
       ],
       "_note": "The whole of 'finance always waits for me'. Real money, real tax lots, real wash-sale windows \u2014 one inserted node, and its removal is not on the table."
     }
-  }
+  },
+  "_edge_contract": "An edge is a script; its exit code selects the outgoing branch. 0 proceed, 1 the work failed, 2 the edge itself is broken \u2014 and 2 must never look like 1, because a repair node handed a broken edge would 'fix' code that was never the problem. `exits` declares what a script can return and every one of them must have a route: an undeclared exit is a token stopping somewhere nobody designed. bin/edges/_lib.sh is the contract as code; tools/check-edges.py enforces it."
 }

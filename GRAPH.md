@@ -127,7 +127,31 @@ makes replay testing possible at all.
 Edges may carry state across crossings — attempt counts, the lint baseline — but
 that state lives on disk and in git, never in an agent's context.
 
-Contract: `cp-edge-contract-vm6`.
+The contract is `bin/edges/_lib.sh`, which every edge sources so there is one
+idea of what an exit code means rather than one per script:
+
+```
+edge_ok               0  proceed
+edge_failed "why"     1  the work failed — that is work, and it routes to repair
+edge_broken "why"     2  the EDGE is broken — not the work
+```
+
+Being told its input is what makes an edge a function of it. The runner supplies
+`CP_RESULT` (the node result), `CP_BASE` (the commit the work started from) and
+`CP_WORKTREE`; an edge that resolved `HEAD` for itself would be a different
+function on every crossing, and replay would prove nothing about the run it
+replays. A missing input is `edge_broken`, never `edge_failed` — getting that
+backwards routes a missing input to a repair node, which cannot possibly fix it.
+
+Each edge declares in `nodes/graph.json` the exit codes it can actually return,
+and `tools/check-edges.py` fails the gate if any declared exit has no route, if
+exit 2 routes where exit 1 does, if a script is not executable or does not source
+the contract, or if any file under `bin/edges/` mentions a model — the shared
+library included, since it is the one file a reference-following check would
+skip and a model call there is a model call on every edge.
+
+**The edge scripts themselves are still stubs** that exit 0 without touching a
+repo, which is why every dry run looks so clean (`cp-edge-scripts-zow`).
 
 ## A node's interior is unconstrained
 
@@ -416,6 +440,7 @@ script gating a transition, built before the model above was written down:
 |---|---|
 | `./verify` (0 / 1 / 2) | the gate edge, with a three-way typed verdict |
 | `bin/verify-all` | the same edge across all factories, one exit code |
+| `bin/edges/_lib.sh` | the exit-code contract every edge script sources |
 | `.githooks/pre-push` | the only **enforced** edge |
 | `tools/lint_ratchet.py` + baseline | an edge carrying state across crossings |
 
