@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# verify-all — run every factory's gate on this machine and report one board.
+#
+# There is no CI. Nothing here is validated on a remote runner, by decision:
+# faceoff-finder needs local footage, the venv and the GPU weights, and a gate
+# that cannot run where the work happens is not a gate. So this is the place
+# that answers "is everything green" — one command, one screen, one exit code.
+#
+#   verify-all              full gate in every factory
+#   verify-all --fast       cheap tier only
+#   verify-all <name> ...   just these factories
+#
+# Exit 0 when every factory is green, 1 when any is red, 2 when a factory could
+# not be run at all (missing repo, missing ./verify) — that is a different
+# problem from a failing check and should not look like one.
+
+set -uo pipefail
+
+ROOT=/mnt/projects
+STATE="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/state"
+FACTORIES=(faceoff-finder ai-ih-coach finance-c-and-c)
+MODE=full
+
+args=()
+for a in "$@"; do
+  case "$a" in
+    --fast) MODE=fast ;;
+    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "verify-all: unknown option $a" >&2; exit 2 ;;
+    *) args+=("$a") ;;
+  esac
+done
+[ ${#args[@]} -gt 0 ] && FACTORIES=("${args[@]}")
+
+command -v jq >/dev/null 2>&1 || { echo "verify-all: jq is required" >&2; exit 2; }
+mkdir -p "$STATE"
+
+if [ -t 1 ]; then
+  B=$'\033[1m'; D=$'\033[2m'; R=$'\033[31m'; G=$'\033[32m'; Y=$'\033[33m'; N=$'\033[0m'
+else
+  B=; D=; R=; G=; Y=; N=
+fi
+
+red=0
+broken=0
+reports='[]'
+
+for name in "${FACTORIES[@]}"; do
+  repo="$ROOT/$name"
+
+  if [ ! -x "$repo/verify" ]; then
+    printf '  %s?%s  %-18s %sno ./verify — not a factory yet%s\n' "$Y" "$N" "$name" "$D" "$N"
+    broken=$((broken + 1))
+    continue
+  fi
+
+  flags=(--evidence)
+  [ "$MODE" = fast ] && flags+=(--fast)
+
+  ( cd "$repo" && ./verify "${flags[@]}" ) >/dev/null 2>&1
+  rc=$?
+
+  if [ ! -f "$repo/verify-report.json" ]; then
+    printf '  %s?%s  %-18s %sverify exited %d and wrote no evidence%s\n' "$Y" "$N" "$name" "$D" "$rc" "$N"
+    broken=$((broken + 1))
+    continue
+  fi
+
+  report=$(cat "$repo/verify-report.json")
+  reports=$(jq -c --argjson r "$report" '. + [$r]' <<<"$reports")
+
+  ok=$(jq -r '.ok' <<<"$report")
+  branch=$(jq -r '.branch' <<<"$report")
+  commit=$(jq -r '.commit' <<<"$report")
+  secs=$(jq -r '.seconds' <<<"$report")
+  dirty=$(jq -r '.dirty_files' <<<"$report")
+  passed=$(jq -r '[.checks[] | select(.status == "pass")] | length' <<<"$report")
+  total=$(jq -r '[.checks[] | select(.status != "skipped")] | length' <<<"$report")
+
+  if [ "$ok" = true ]; then
+    mark="${G}green${N}"
+  else
+    mark="${R}red  ${N}"
+    red=$((red + 1))
+  fi
+
+  printf '  %b  %-18s %s%2d/%-2d%s  %-14s %-9s %s%3ss%s' \
+    "$mark" "$name" "$D" "$passed" "$total" "$N" "$branch" "$commit" "$D" "$secs" "$N"
+  if [ "$dirty" -gt 0 ]; then
+    printf '  %s%s uncommitted%s' "$Y" "$dirty" "$N"
+  fi
+  printf '\n'
+
+  # The one-line-per-check detail is only interesting when something failed.
+  if [ "$ok" != true ]; then
+    jq -r '.checks[] | select(.status == "fail")
+           | "        " + .name + ":\n" + (.output | split("\n") | map("          " + .) | join("\n"))' \
+      <<<"$report"
+  fi
+done
+
+jq -n --arg ran_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg mode "$MODE" \
+      --argjson reports "$reports" \
+      '{ran_at: $ran_at, mode: $mode, ok: ([$reports[].ok] | all), factories: $reports}' \
+  > "$STATE/verify-latest.json"
+
+echo
+if [ "$broken" -gt 0 ]; then
+  printf '%s%d factor%s could not be run%s\n' "$Y$B" "$broken" "$([ "$broken" = 1 ] && echo y || echo ies)" "$N"
+  exit 2
+elif [ "$red" -gt 0 ]; then
+  printf '%s%d of %d red%s\n' "$R$B" "$red" "${#FACTORIES[@]}" "$N"
+  exit 1
+else
+  printf '%sall %d green%s  %s%s%s\n' "$G$B" "${#FACTORIES[@]}" "$N" "$D" "$STATE/verify-latest.json" "$N"
+  exit 0
+fi
