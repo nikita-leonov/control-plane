@@ -25,9 +25,15 @@ dirty-file count, and each check's status and duration.
 
 ```
 factory/     the shared parts of a factory repo — ./verify template + generator
-bin/         commands
+nodes/       the verdict contract — envelope schema + per-node closed enums
+bin/         commands: verify-all, cp-verdict
+tools/       checks used by ./verify
 state/       generated; what the panel reads
 ```
+
+The panel gates itself, and runs first in `verify-all` rather than last: it holds
+the verdict contract that every node's output in every factory is validated
+against, so if this is red, "green" elsewhere means less than it looks like.
 
 `~/git-mirrors/sync` mirrors all three repos onto the NVMe root disk, away from
 the `sda1` that `/mnt/projects` lives on. It reports uncommitted files

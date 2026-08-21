@@ -16,9 +16,12 @@
 
 set -uo pipefail
 
+# control-plane runs first and is not merely a fourth factory: it holds the
+# verdict contract every node's output is validated against, so if it is red,
+# "green" in the other three means less than it looks like.
 ROOT=/mnt/projects
 STATE="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/state"
-FACTORIES=(faceoff-finder ai-ih-coach finance-c-and-c)
+FACTORIES=(control-plane faceoff-finder ai-ih-coach finance-c-and-c)
 MODE=full
 
 args=()

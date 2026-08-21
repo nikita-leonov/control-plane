@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Refuse to push a tree that cannot pass its own gate.
+#
+# This runs the FULL gate, not --fast. There is no CI behind it by design —
+# nothing about this work is validated on a remote machine — so this hook is the
+# last automatic check before history leaves the repo, and it has to be the
+# whole check. Every factory's full run is under three seconds; the cheap tier
+# exists for the agent inner loop, not for the gate.
+#
+#   SKIP_VERIFY=1 git push    escape hatch, for when you know why
+#
+# Installed by: git config core.hooksPath .githooks
+
+if [ "${SKIP_VERIFY:-}" = "1" ]; then
+  echo "pre-push: verify skipped (SKIP_VERIFY=1)"
+  exit 0
+fi
+
+root=$(git rev-parse --show-toplevel)
+if [ ! -x "$root/verify" ]; then
+  echo "pre-push: no ./verify in $root — nothing to check"
+  exit 0
+fi
+
+if ! "$root/verify"; then
+  echo
+  echo "pre-push: blocked. Fix the above, or push with SKIP_VERIFY=1 if you know why."
+  exit 1
+fi

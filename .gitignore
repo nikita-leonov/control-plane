@@ -3,3 +3,4 @@ state/
 
 # Python
 __pycache__/
+verify-report.json

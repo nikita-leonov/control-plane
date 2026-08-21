@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""cp-verdict — emit and validate a node result.
+
+This is how a typed value gets out of an agent. A node does not "return" a
+verdict by writing one at the end of its output; it calls this command, which
+validates and writes the envelope. Two things follow, and they are the point:
+
+  * A node that produces only prose produces no verdict at all. There is no
+    file, so there is nothing to best-effort parse — the failure is structural
+    rather than a judgement call made by a regex.
+  * Malformed output is rejected at emission, where the node can still fix it,
+    instead of downstream where the runner would have to guess.
+
+Node tool policy grants `Bash(cp-verdict:*)` and nothing else that can write.
+
+  cp-verdict emit --node reviewer --token coach-10i --verdict reject \
+                  --payload @findings.json
+  cp-verdict check verdict.json
+  cp-verdict schema --node reviewer     # what may I return?
+
+Exit 0 valid, 1 invalid, 2 cp-verdict itself is broken — the same three-way
+contract ./verify uses, so an edge can route on it without special cases.
+"""
+
+import argparse, json, os, pathlib, re, sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+NODES = HERE.parent / "nodes"
+
+
+def die(msg, code=2):
+    print(f"cp-verdict: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def load(name):
+    try:
+        return json.loads((NODES / name).read_text())
+    except FileNotFoundError:
+        die(f"missing {NODES / name}")
+    except json.JSONDecodeError as e:
+        die(f"{name} is not valid JSON: {e}")
+
+
+# --- a JSON Schema subset, hand-written on purpose -------------------------
+#
+# The repo's premise is that it runs with no install step, so the runtime
+# validator takes no dependency. The schema file remains the contract of
+# record, and tests/test_verdict.py cross-checks this implementation against
+# the real `jsonschema` library so the two cannot silently disagree.
+
+def _resolve(ref, root):
+    if not ref.startswith("#/"):
+        die(f"only local $ref supported, got {ref}")
+    node = root
+    for part in ref[2:].split("/"):
+        node = node[part]
+    return node
+
+
+def validate(inst, schema, root, path="$", errs=None):
+    if errs is None:
+        errs = []
+    if "$ref" in schema:
+        return validate(inst, _resolve(schema["$ref"], root), root, path, errs)
+
+    t = schema.get("type")
+    types = {"object": dict, "array": list, "string": str, "integer": int, "number": (int, float)}
+    if t:
+        want = types[t]
+        # bool is an int in Python; an integer field must not accept true.
+        if isinstance(inst, bool) or not isinstance(inst, want):
+            errs.append(f"{path}: expected {t}, got {type(inst).__name__}")
+            return errs
+
+    if "enum" in schema and inst not in schema["enum"]:
+        errs.append(f"{path}: {inst!r} not one of {schema['enum']}")
+
+    if isinstance(inst, str):
+        if "minLength" in schema and len(inst) < schema["minLength"]:
+            errs.append(f"{path}: shorter than {schema['minLength']}")
+        if "maxLength" in schema and len(inst) > schema["maxLength"]:
+            errs.append(f"{path}: longer than {schema['maxLength']} ({len(inst)})")
+        if "pattern" in schema and not re.search(schema["pattern"], inst):
+            errs.append(f"{path}: {inst!r} does not match {schema['pattern']}")
+
+    if isinstance(inst, int) and not isinstance(inst, bool):
+        if "minimum" in schema and inst < schema["minimum"]:
+            errs.append(f"{path}: below minimum {schema['minimum']}")
+        if "maximum" in schema and inst > schema["maximum"]:
+            errs.append(f"{path}: above maximum {schema['maximum']}")
+
+    if isinstance(inst, list):
+        if "minItems" in schema and len(inst) < schema["minItems"]:
+            errs.append(f"{path}: needs at least {schema['minItems']} items")
+        if "maxItems" in schema and len(inst) > schema["maxItems"]:
+            errs.append(f"{path}: at most {schema['maxItems']} items")
+        if "items" in schema:
+            for i, v in enumerate(inst):
+                validate(v, schema["items"], root, f"{path}[{i}]", errs)
+
+    if isinstance(inst, dict):
+        props = schema.get("properties", {})
+        for r in schema.get("required", []):
+            if r not in inst:
+                errs.append(f"{path}: missing required field {r!r}")
+        if schema.get("additionalProperties") is False:
+            for k in inst:
+                if k not in props:
+                    errs.append(f"{path}: unknown field {k!r} — not in the contract")
+        for k, v in inst.items():
+            if k in props:
+                validate(v, props[k], root, f"{path}.{k}", errs)
+
+    return errs
+
+
+# --- the routing half ------------------------------------------------------
+#
+# Shape validation cannot express "this verdict belongs to this node" or
+# "question is required exactly when the verdict parks". Those are checked
+# against node-types.json, which is the routing table.
+
+def check_envelope(env):
+    schema = load("verdict.schema.json")
+    types = load("node-types.json")
+
+    errs = validate(env, schema, schema)
+    if errs:
+        return errs
+
+    node = env["node"]
+    spec = types["nodes"].get(node)
+    if not spec:
+        return [f"$.node: {node!r} is not a declared node type "
+                f"({', '.join(types['nodes'])})"]
+
+    if spec.get("verdicts_from_question"):
+        if "question" in env:
+            errs.append("$.question: a human node answers a question, it does not ask one")
+        return errs
+
+    allowed = spec["verdicts"]
+    verdict = env["verdict"]
+    if verdict not in allowed:
+        return [f"$.verdict: {verdict!r} is not in {node}'s closed enum "
+                f"({', '.join(sorted(allowed))})"]
+
+    rule = allowed[verdict]
+    payload_def = rule.get("payload", "empty")
+    errs += validate(env.get("payload", {}),
+                     {"$ref": f"#/$defs/{payload_def}"}, schema, "$.payload")
+
+    parks = rule.get("parks", False)
+    if parks and "question" not in env:
+        errs.append(f"$.question: {node}/{verdict} parks the token on a human node, "
+                    "so it must carry the question being asked")
+    if not parks and "question" in env:
+        errs.append(f"$.question: {node}/{verdict} does not park, so a question "
+                    "has nowhere to be answered")
+
+    if parks and "question" in env:
+        edges = {o["edge"] for o in env["question"]["options"]}
+        vals = [o["value"] for o in env["question"]["options"]]
+        if len(set(vals)) != len(vals):
+            errs.append("$.question.options: duplicate option values")
+        if len(edges) < 2:
+            errs.append("$.question.options: every option crosses the same edge — "
+                        "that is not a decision")
+    return errs
+
+
+def read_arg(v):
+    if v is None:
+        return None
+    if v.startswith("@"):
+        p = v[1:]
+        try:
+            return json.loads(sys.stdin.read() if p == "-" else pathlib.Path(p).read_text())
+        except FileNotFoundError:
+            die(f"no such file: {p}")
+        except json.JSONDecodeError as e:
+            die(f"{p} is not valid JSON: {e}", 1)
+    try:
+        return json.loads(v)
+    except json.JSONDecodeError as e:
+        die(f"not valid JSON: {e}", 1)
+
+
+def report(errs, what):
+    if errs:
+        print(f"cp-verdict: {what} is not a valid node result", file=sys.stderr)
+        for e in errs:
+            print(f"  {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="cp-verdict", add_help=True,
+                                 description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    e = sub.add_parser("emit", help="validate and write a node result")
+    e.add_argument("--node", required=True)
+    e.add_argument("--token", required=True)
+    e.add_argument("--verdict", required=True)
+    e.add_argument("--attempt", type=int, default=int(os.environ.get("CP_ATTEMPT", 1)))
+    e.add_argument("--payload", help="JSON, or @file, or @- for stdin")
+    e.add_argument("--question", help="JSON, or @file — required when the verdict parks")
+    e.add_argument("--evidence")
+    e.add_argument("--out", default=os.environ.get("CP_VERDICT_OUT", "verdict.json"))
+
+    c = sub.add_parser("check", help="validate an existing node result")
+    c.add_argument("file")
+
+    s = sub.add_parser("schema", help="what a node may return")
+    s.add_argument("--node")
+
+    a = ap.parse_args()
+
+    if a.cmd == "schema":
+        types = load("node-types.json")
+        if a.node:
+            spec = types["nodes"].get(a.node) or die(f"unknown node {a.node!r}", 1)
+            print(json.dumps({a.node: spec}, indent=2))
+        else:
+            print(json.dumps(types, indent=2))
+        return 0
+
+    if a.cmd == "check":
+        try:
+            env = json.loads(pathlib.Path(a.file).read_text())
+        except FileNotFoundError:
+            print(f"cp-verdict: {a.file} does not exist — the node produced no verdict",
+                  file=sys.stderr)
+            return 1
+        except json.JSONDecodeError as ex:
+            print(f"cp-verdict: {a.file} is not JSON: {ex}", file=sys.stderr)
+            return 1
+        return report(check_envelope(env), a.file)
+
+    env = {"node": a.node, "token": a.token, "verdict": a.verdict, "attempt": a.attempt}
+    payload = read_arg(a.payload)
+    if payload is not None:
+        env["payload"] = payload
+    question = read_arg(a.question)
+    if question is not None:
+        env["question"] = question
+    if a.evidence:
+        env["evidence"] = a.evidence
+
+    rc = report(check_envelope(env), "this result")
+    if rc:
+        return rc
+    pathlib.Path(a.out).write_text(json.dumps(env, indent=2) + "\n")
+    print(f"{a.node}/{a.verdict} -> {a.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except BrokenPipeError:
+        sys.exit(0)

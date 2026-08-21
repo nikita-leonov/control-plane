@@ -49,7 +49,72 @@ blobs, this is a prompt chain wearing a graph costume. The payload is a small
 typed record — issue id, commit sha, file list, evidence path, attempt count —
 carrying what the next edge needs and nothing else.
 
-Contract and schema: `cp-verdict-contract-g3u`.
+### How a typed value actually gets out of an agent
+
+Not by asking it to end with a JSON block. That is parsing prose with extra
+steps, and it fails silently the one time it matters.
+
+A node emits its verdict by **calling a command**, `bin/cp-verdict`, which
+validates and writes the envelope. Its tool policy grants `Bash(cp-verdict:*)`
+and nothing else that can write. Two properties follow, and they are the reason
+for the design:
+
+- **A node that produces only prose produces no verdict at all.** There is no
+  file, so there is nothing to best-effort parse and no edge is ever tempted to
+  interpret a paragraph as a decision. The failure is structural rather than a
+  judgement call made by a regex.
+- **Malformed output is rejected at emission**, where the node can still fix it,
+  rather than downstream where the runner would have to guess.
+
+```
+nodes/verdict.schema.json   the envelope shape — the contract of record
+nodes/node-types.json       each node's closed verdict enum, and which edge each selects
+bin/cp-verdict              emit | check | schema
+```
+
+`cp-verdict schema --node reviewer` answers "what may I return?", so a node's
+system prompt can be generated from the contract instead of drifting from it.
+
+Validation is two-stage, because shape alone cannot express routing. The
+envelope is checked against the JSON Schema; then the verdict is checked against
+that node's closed enum, the payload against the shape that verdict declares,
+and the question against whether the verdict parks. Unknown fields are
+**rejected at emission** and **stripped again at manifest assembly** — the same
+rule at two points, because a free-text field is precisely how a Builder would
+argue its case to a Reviewer.
+
+The runtime validator hand-implements a subset of JSON Schema and takes no
+dependency, since this repo's premise is that it runs with no install step. That
+is only defensible if it is not wrong, so `tests/test_verdict.py` pins it against
+the real `jsonschema` library over a corpus. If they diverge, the hand-written
+one is the bug.
+
+### A human node is a node like any other
+
+A verdict that parks the token must carry the **question** being asked — and the
+question's options *are* that human node's outgoing edges:
+
+```json
+{ "asks": "LABEL_STATUSES is exported, served nowhere and used nowhere. Serve it or delete it?",
+  "context": [ {"ref": "shared/taxonomy.ts:442", "why": "where it is exported"},
+               {"ref": "coach-5ao", "why": "the issue filed when the gate found it"} ],
+  "options": [ {"value": "serve",  "means": "add it to taxonomyPayload()",     "edge": "repair"},
+               {"value": "delete", "means": "remove the unused export",        "edge": "repair-delete"},
+               {"value": "keep",   "means": "record why in UNSERVED_BY_DESIGN","edge": "approve"} ] }
+```
+
+So a human node needs no special machinery. The only difference from an agent
+node is who fills in the verdict; the question is just its edge list rendered for
+a person. This is what lets `cp brief` show the actual decision with its options
+rather than "something needs you" — the difference between a decision queue and
+a notification list, which is the whole thesis of the panel.
+
+The schema enforces that this stays a decision. `asks` is capped at 280
+characters, because a decision needing an essay is not ready to be asked.
+`context` holds pointers with one line of why, never free text, so context cannot
+become an argument aimed at the person. There must be at least two options, and
+they must not all cross the same edge.
+
 
 ## Edges are pure functions of their input
 
@@ -312,8 +377,6 @@ Everything above describes the frame. Almost none of it runs:
 
 - **Nothing crosses edges.** There is no runner; a human does the next thing,
   which is precisely the bottleneck being removed (`cp-runner-3k1`).
-- **No node emits a typed value.** Everything is prose today
-  (`cp-verdict-contract-g3u`).
 - **The graph is not declared anywhere** but in this prose
   (`cp-graph-def-ans`).
 - **No node exists.** Reviewer first, deliberately — scaling the author before
