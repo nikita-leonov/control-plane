@@ -21,8 +21,12 @@ bin/verify-all --fast       cheap tier only
 bin/verify-all <name>       just one
 ```
 
-`cp` is read-only and says so: anything that advances work belongs to the runner,
-which does not exist yet. It reports what is missing rather than rendering an
+`cp` is read-only about work, with one exception that proves the rule: you can
+answer a parked token from the browser. Advancing a token is still the runner's
+job — the panel only carries your answer to a human node, which is the one input
+the graph cannot produce for itself. The answer is checked against that token's
+own declared options before it goes anywhere, so the endpoint can only pick a
+branch the parking node actually offered. It reports what is missing rather than rendering an
 empty section as a quiet one — while no node has ever run, the board says exactly
 that.
 

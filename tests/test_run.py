@@ -67,6 +67,41 @@ class Walks(unittest.TestCase):
         self.assertEqual(rows[-1]["to"], "@done")
 
 
+class TheLogReconstructsThePath(unittest.TestCase):
+    def test_the_chain_is_continuous(self):
+        """Each crossing must start where the last one ended.
+
+        The criterion for the transition log is that it reconstructs the full
+        path of a change without an agent transcript. A row whose `from` skips a
+        hop reads plausibly and is wrong, which is the worst kind of evidence.
+        """
+        run("finance-c-and-c", "t-chain", "--dry-run", "--scenario", "happy")
+        run("--resume", "t-chain", "--answer", "yes")
+        import json as _j
+        g = _j.loads((ROOT / "nodes" / "graph.json").read_text())
+        rows = crossings("t-chain")
+        self.assertGreater(len(rows), 4)
+        for a, b in zip(rows, rows[1:]):
+            # A row is one edge crossing: from -> [edge] -> to. So the next row
+            # either starts where this one landed, or crosses the edge this one
+            # named — which is what a human answer does, since choosing an option
+            # selects an edge rather than moving the token itself.
+            ok = (a["to"] == b["from"]) or (a["to"] in g["edges"] and a["to"] == b["edge"])
+            self.assertTrue(ok, f"path skips: ...{a['from']}->{a['to']} then {b['from']}->{b['to']}")
+        self.assertEqual(rows[-1]["to"], "@done")
+
+    def test_a_verdict_is_only_on_the_crossing_that_produced_it(self):
+        """A verdict repeated onto later rows reads as though the Reviewer
+        approved edges it never saw."""
+        run("control-plane", "t-verd", "--dry-run", "--scenario", "happy")
+        rows = crossings("t-verd")
+        withv = [r for r in rows if r["verdict"]]
+        self.assertTrue(withv)
+        for r in withv:
+            self.assertIn(r["from"], ("builder", "reviewer", "repair", "@park"),
+                          f"{r['from']} does not emit verdicts")
+
+
 class TheHumanNode(unittest.TestCase):
     def test_finance_parks_before_merge_and_the_others_do_not(self):
         run("finance-c-and-c", "t-fin", "--dry-run", "--scenario", "happy")

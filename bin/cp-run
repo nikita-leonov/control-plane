@@ -143,8 +143,8 @@ def advance(tok, graph, types, args):
             return save(tok)
 
         if pos in graph["edges"]:             # mid-transition, keep going
-            do_edge(tok, pos, graph, factory, args, tok.get("last_node", pos),
-                    tok.get("last_verdict", "-"))
+            do_edge(tok, pos, graph, factory, args,
+                    tok.get("prev_vertex", pos), None)
             if tok["status"] == "parked":
                 return save(tok)
             continue
@@ -160,7 +160,7 @@ def advance(tok, graph, types, args):
         env = run_node(tok, pos, graph, types, args)
         verdict = env["verdict"]
         rule = spec["verdicts"][verdict]
-        tok["last_node"], tok["last_verdict"] = pos, verdict
+        tok["prev_vertex"] = pos
 
         if rule.get("parks"):
             record({"ts": now(), "token": tok["token"], "factory": factory, "from": pos,
@@ -186,7 +186,7 @@ def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
     # reached by another edge's route — and merge is exactly such an edge.
     if edge_name in set(graph["factories"].get(factory, {}).get("human_before", [])) \
             and not tok.pop("human_cleared_" + edge_name, None):
-        record({"ts": now(), "token": tok["token"], "factory": factory, "from": from_node,
+        record({"ts": now(), "token": tok["token"], "factory": factory, "from": edge_name,
                 "verdict": verdict, "edge": None, "exit": None, "to": "@park",
                 "ms": 0, "why": f"human_before {edge_name}"})
         tok.update(status="parked", node="@park", parked_from=from_node, question={
@@ -202,7 +202,7 @@ def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
         tok["attempts"][edge_name] = n
         if n > budget:
             # Exhaustion is an edge to a human node, not an exception.
-            record({"ts": now(), "token": tok["token"], "factory": factory, "from": from_node,
+            record({"ts": now(), "token": tok["token"], "factory": factory, "from": edge_name,
                     "verdict": verdict, "edge": edge_name, "exit": None, "to": "@park",
                     "ms": 0, "why": f"budget {budget} exhausted"})
             tok["status"] = "parked"
@@ -221,7 +221,7 @@ def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
     if to is None:
         # No edge matched. Kept as a visible terminal on purpose: a model router
         # would have improvised past the gap and hidden it.
-        record({"ts": now(), "token": tok["token"], "factory": factory, "from": from_node,
+        record({"ts": now(), "token": tok["token"], "factory": factory, "from": edge_name,
                 "verdict": verdict, "edge": edge_name, "exit": rc, "to": "@park", "ms": ms,
                 "why": f"no route for exit {rc}"})
         tok["status"] = "parked"
@@ -237,6 +237,7 @@ def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
 
     record({"ts": now(), "token": tok["token"], "factory": factory, "from": from_node,
             "verdict": verdict, "edge": edge_name, "exit": rc, "to": to, "ms": ms})
+    tok["prev_vertex"] = edge_name
     tok["node"] = to
     save(tok)
     return rc, ms
@@ -251,6 +252,7 @@ def main():
     ap.add_argument("--resume")
     ap.add_argument("--answer")
     ap.add_argument("--show")
+    ap.add_argument("--via", default="cli", choices=["cli", "web"])
     a = ap.parse_args()
 
     graph, types = load("graph.json"), load("node-types.json")
@@ -275,7 +277,7 @@ def main():
         chosen = opts[a.answer]
         record({"ts": now(), "token": tok["token"], "factory": tok["factory"], "from": "@park",
                 "verdict": a.answer, "edge": None, "exit": None,
-                "to": chosen["edge"], "ms": 0, "actor": "human"})
+                "to": chosen["edge"], "ms": 0, "actor": "human", "via": a.via})
         if chosen["edge"] == "@park":
             return 0
         tok["status"] = "running"
@@ -283,8 +285,9 @@ def main():
         if chosen["edge"] in graph["edges"]:
             tok["attempts"].pop(chosen["edge"], None)
             tok["human_cleared_" + chosen["edge"]] = True   # consumed on the next crossing
-            tok["node"] = tok.get("parked_from") or graph["entry"]
-            do_edge(tok, chosen["edge"], graph, tok["factory"], a, "@park", a.answer)
+            tok["node"] = tok.get("parked_from") or graph["entry"]  # noqa: retained for context
+            tok["prev_vertex"] = "@park"
+            do_edge(tok, chosen["edge"], graph, tok["factory"], a, "@park", None)
         advance(tok, graph, types, a)
         print(f"  {tok['token']}: {tok['status']} at {tok['node']}")
         return 0

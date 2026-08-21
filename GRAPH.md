@@ -399,8 +399,22 @@ sitting on; selecting one highlights its path and lists every crossing; selectin
 a node or an edge shows every token that has ever crossed it.
 
 The decision queue is every parked token, across all factories, each rendering
-its own question and options. That is what makes *surfaces decisions, never
-diffs* a thing you can look at rather than a thing to remember.
+its own question and options — and each answerable in place. That is what makes
+*surfaces decisions, never diffs* a thing you can look at rather than a thing to
+remember.
+
+A blocked token is meant to be impossible to miss rather than something you go
+looking for: a sticky bar across every screen, a count on the factory's tab, a
+count in the browser tab title so it reads even when the window is behind
+something else, and how long it has been waiting. The bar disappears completely
+when nothing is parked — a banner that is always there is one you stop seeing.
+
+Answering from the panel is the only thing in it that changes anything, so it is
+the only thing with a surface worth attacking. An answer must be one of the
+options that token's own parking node offered; it cannot name an arbitrary edge,
+which would be a way to walk a token anywhere in the graph from a browser. And
+the answer is recorded with where it came from — months later it matters whether
+a person clicked it or a script supplied it.
 
 ## What is not in the model yet
 
