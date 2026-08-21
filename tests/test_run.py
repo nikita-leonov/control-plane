@@ -184,6 +184,30 @@ class Resumability(unittest.TestCase):
         r = run("--resume", "t-mode", "--answer", "yes")
         self.assertEqual(r.returncode, 0, r.stderr)
 
+    def test_a_second_run_is_a_separate_journey(self):
+        """Re-running a token must not splice two runs into one path.
+
+        The old crossings stay in the log — history is history — but they carry a
+        different run number so the journey reads as what actually happened.
+        """
+        run("control-plane", "t-rerun", "--dry-run", "--scenario", "happy")
+        first = crossings("t-rerun")
+        run("control-plane", "t-rerun", "--dry-run", "--scenario", "happy")
+        allrows = crossings("t-rerun")
+        self.assertEqual(len(allrows), len(first) * 2)
+        self.assertEqual({r.get("run") for r in allrows}, {1, 2})
+        self.assertEqual(token("t-rerun")["run"], 2)
+        second = [r for r in allrows if r.get("run") == 2]
+        self.assertEqual(second[0]["from"], "builder", "a new run starts at the entry")
+
+    def test_every_crossing_carries_its_run(self):
+        """An unstamped row defaults to run 1 and lands in the wrong journey —
+        which is worse than missing, because it reads as part of a path."""
+        run("finance-c-and-c", "t-stamp", "--dry-run", "--scenario", "happy")
+        run("--resume", "t-stamp", "--answer", "yes")
+        for r in crossings("t-stamp"):
+            self.assertIn("run", r, f"unstamped: {r}")
+
     def test_show_reads_a_token_back(self):
         run("control-plane", "t-show", "--dry-run", "--scenario", "happy")
         r = run("--show", "t-show")

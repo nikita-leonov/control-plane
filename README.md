@@ -26,7 +26,8 @@ answer a parked token from the browser. Advancing a token is still the runner's
 job — the panel only carries your answer to a human node, which is the one input
 the graph cannot produce for itself. The answer is checked against that token's
 own declared options before it goes anywhere, so the endpoint can only pick a
-branch the parking node actually offered. It reports what is missing rather than rendering an
+branch the parking node actually offered. The ready list is dispatchable on the
+same terms — only what the tracker calls ready, and never an epic. It reports what is missing rather than rendering an
 empty section as a quiet one — while no node has ever run, the board says exactly
 that.
 

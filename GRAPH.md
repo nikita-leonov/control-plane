@@ -403,6 +403,21 @@ its own question and options — and each answerable in place. That is what make
 *surfaces decisions, never diffs* a thing you can look at rather than a thing to
 remember.
 
+Work enters the graph from the panel too: the ready list is dispatchable, and
+what may be dispatched is exactly what the tracker calls ready — not any string a
+browser can send, and never an epic, because an epic is a container and no single
+node can do one.
+
+The picture answers *where is this now* rather than *where has it been*. The full
+history drawn over a graph is mostly geometry; every token eventually touches
+most of it. So the current position is marked NOW, the vertex it came from is
+marked behind it, one arrow is drawn between them, and everything else fades to
+context. **The journey is a list** — the order things happened in is the part
+worth reading, and a path traced over a diagram only looks like information.
+A token can be run again; earlier runs stay in the log but carry their own run
+number, because splicing two runs into one path reads as something that never
+happened.
+
 A blocked token is meant to be impossible to miss rather than something you go
 looking for: a sticky bar across every screen, a count on the factory's tab, a
 count in the browser tab title so it reads even when the window is behind

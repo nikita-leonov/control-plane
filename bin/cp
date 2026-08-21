@@ -26,6 +26,7 @@ import time
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 STATE_DIR = ROOT / "state"
+SCENARIO = __import__("re").compile(r"^[a-z][a-z0-9-]{0,31}$")
 PROJECTS = pathlib.Path("/mnt/projects")
 FACTORIES = ["control-plane", "faceoff-finder", "ai-ih-coach", "finance-c-and-c"]
 
@@ -296,7 +297,10 @@ def api_state():
     cheaper than keeping a socket open and reasoning about staleness."""
     gate, ran = gates(False)
     out = {"ran_at": ran, "factories": [], "graph": {}, "node_types": {},
-           "tokens": [], "transitions": [], "generated": time.strftime("%H:%M:%S")}
+           "tokens": [], "transitions": [], "generated": time.strftime("%H:%M:%S"),
+           "scenarios": sorted(p.stem[4:] for p in
+                               (ROOT / "tests" / "fixtures").glob("run-*.json")),
+           "live": False}
     try:
         out["graph"] = json.loads((ROOT / "nodes" / "graph.json").read_text())
         out["node_types"] = json.loads((ROOT / "nodes" / "node-types.json").read_text())
@@ -321,12 +325,23 @@ def api_state():
                 for o in rows if o.get("status") != "closed"]
         out["factories"].append(entry)
 
+    titles = {}
+    for f in FACTORIES:
+        for o in (issues(f) or []):
+            titles[(f, o["id"])] = {"title": o.get("title", ""),
+                                    "status": o.get("status"),
+                                    "priority": o.get("priority"),
+                                    "type": o.get("issue_type")}
+
     tdir = STATE_DIR / "tokens"
     if tdir.exists():
         for p in sorted(tdir.glob("*.json")):
             try:
                 t = json.loads(p.read_text())
                 t["waiting_since"] = t.get("updated")
+                # None when the token is not a tracked issue — a demo run, say.
+                # The panel says so rather than showing a blank where work goes.
+                t["issue"] = titles.get((t.get("factory"), t.get("token")))
                 out["tokens"].append(t)
             except Exception:                              # noqa: BLE001
                 pass
@@ -372,6 +387,8 @@ def cmd_serve(argv):
             the branches the parking node offered. It cannot name an arbitrary
             edge, which would be a way to walk a token anywhere from a browser.
             """
+            if self.path == "/api/dispatch":
+                return self.dispatch()
             if self.path != "/api/answer":
                 return self.reply(404, {"error": f"no POST endpoint at {self.path}"})
             try:
@@ -401,6 +418,66 @@ def cmd_serve(argv):
             after = json.loads(tp.read_text())
             return self.reply(200, {"ok": True, "token": tid,
                                     "status": after.get("status"), "node": after.get("node")})
+
+        def dispatch(self):
+            """Put a backlog issue into the graph as a token.
+
+            Constrained on purpose. The token id must be an issue that is
+            actually ready in that factory — not any string a browser can send —
+            so the panel can only dispatch work the tracker already agreed is
+            startable. Anything looser and this becomes a way to create arbitrary
+            state files from a web page.
+            """
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                if n > 4096:
+                    raise ValueError("body too large")
+                b = json.loads(self.rfile.read(n) or b"{}")
+                factory, tid, scen = b.get("factory"), b.get("token"), b.get("scenario", "happy")
+            except Exception as e:                          # noqa: BLE001
+                return self.reply(400, {"error": f"bad request: {e}"})
+
+            graph = json.loads((ROOT / "nodes" / "graph.json").read_text())
+            if factory not in graph["factories"]:
+                return self.reply(400, {"error": f"{factory!r} is not a factory"})
+
+            rs = ready_ids(factory)
+            if rs is None:
+                return self.reply(409, {"error": f"cannot read {factory}'s backlog"})
+            if tid not in rs:
+                return self.reply(400, {"error": f"{tid!r} is not ready work in {factory}. "
+                                                 "The panel dispatches what the tracker says "
+                                                 "is startable, nothing else."})
+
+            # beads lists epics in `br ready`, but an epic is a container. You
+            # start its children; a token for one would sit in the graph
+            # representing work that no single node can do.
+            kind = next((o.get("issue_type") for o in (issues(factory) or [])
+                         if o["id"] == tid), None)
+            if kind == "epic":
+                return self.reply(400, {"error": f"{tid} is an epic. Dispatch one of its "
+                                                 "children — an epic is a container, not work."})
+
+            if not SCENARIO.match(str(scen)):
+                return self.reply(400, {"error": "bad scenario name"})
+            if not (ROOT / "tests" / "fixtures" / f"run-{scen}.json").exists():
+                return self.reply(400, {"error": f"no scenario {scen!r}"})
+
+            tp = STATE_DIR / "tokens" / f"{tid}.json"
+            if tp.exists():
+                prev = json.loads(tp.read_text())
+                if prev.get("status") != "done":
+                    return self.reply(409, {"error": f"{tid} is already {prev.get('status')} "
+                                                     f"at {prev.get('node')}"})
+
+            r = subprocess.run([str(HERE / "cp-run"), factory, tid,
+                                "--dry-run", "--scenario", scen],
+                               capture_output=True, text=True, timeout=600, cwd=str(ROOT))
+            if r.returncode != 0:
+                return self.reply(500, {"error": r.stderr.strip() or "runner failed"})
+            t = json.loads(tp.read_text())
+            return self.reply(200, {"ok": True, "token": tid,
+                                    "status": t["status"], "node": t["node"]})
 
         def reply(self, code, obj):
             body = json.dumps(obj).encode()

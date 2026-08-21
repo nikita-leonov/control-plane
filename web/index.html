@@ -59,6 +59,28 @@ svg{width:100%;height:auto;max-height:52vh;display:block;background:var(--surfac
 .vtx.occupied rect{fill:var(--accent);stroke:var(--accent)}
 .vtx.occupied text.lbl{fill:var(--surface)}
 .vtx.sel rect{stroke:var(--accent);stroke-width:3}
+.vtx.now rect{fill:var(--accent);stroke:var(--accent);stroke-width:2}
+.vtx.now text.lbl{fill:#fff}
+.vtx.now text.sub{fill:rgba(255,255,255,.75)}
+.vtx.came rect{fill:var(--accentd);stroke:var(--accent);stroke-width:2}
+.vtx.faded{opacity:.22}
+.nowtag{font:700 8px var(--mono);fill:#fff;letter-spacing:.14em}
+.lnk.hop{stroke:var(--accent);stroke-width:3;marker-end:url(#ah);opacity:1}
+.lnk.ghost{opacity:.13}
+.journey{display:flex;flex-direction:column;gap:0}
+.step{display:grid;grid-template-columns:2rem 10rem 1fr auto;gap:10px;
+  padding:7px 0;border-top:1px solid var(--rule);align-items:baseline;font-size:12px}
+.step:first-child{border-top:0}
+.step .n{font:600 10px var(--mono);color:var(--ink3)}
+.step .at{font:600 11px var(--mono);color:var(--ink)}
+.step .what{color:var(--ink2);font-family:var(--mono);font-size:11px}
+.step .what b{color:var(--accent);font-weight:600}
+.step .what i{color:var(--ink3);font-style:normal}
+.step .ms{font:10px var(--mono);color:var(--ink3);text-align:right}
+.step.here{background:var(--accentd);margin:0 -12px;padding-left:12px;padding-right:12px}
+.step.here .at{color:var(--accent)}
+.here-tag{font:700 8px var(--mono);letter-spacing:.14em;color:var(--accent);
+  border:1px solid var(--accent);padding:2px 5px;margin-left:8px}
 .vtx text.lbl{font:600 11px var(--mono);fill:var(--ink);pointer-events:none}
 .vtx text.sub{font:9px var(--mono);fill:var(--ink3);pointer-events:none;letter-spacing:.08em}
 .lnk{fill:none;stroke:var(--ruleh);stroke-width:1.5;marker-end:url(#a)}
@@ -101,6 +123,23 @@ td.k{color:var(--ink);font-weight:500}
 .ans:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .ans[disabled]{opacity:.5;cursor:progress}
 .ans.hold{background:transparent;color:var(--ink2);border:1px solid var(--rule)}
+.ready{display:flex;flex-direction:column;gap:1px;margin-top:8px}
+.ready .row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;
+  padding:6px 0;border-top:1px solid var(--rule)}
+.ready .row:first-child{border-top:0}
+.ready .id{font:600 10px/1.35 var(--mono);color:var(--ink)}
+.ready .ttl,.ttl{font-size:11px;color:var(--ink3);line-height:1.35;
+  font-family:var(--sans);white-space:normal}
+.go{font:600 10px/1 var(--mono);background:transparent;color:var(--accent);
+  border:1px solid var(--accent);padding:5px 8px;cursor:pointer;white-space:nowrap}
+.go:hover{background:var(--accent);color:#fff}
+.go:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.go[disabled]{opacity:.4;cursor:not-allowed;border-color:var(--rule);color:var(--ink3)}
+.go[disabled]:hover{background:transparent;color:var(--ink3)}
+.runbar{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
+.runbar select{font:11px var(--mono);background:var(--surface);color:var(--ink);
+  border:1px solid var(--rule);padding:4px 6px}
+.runbar label{font:9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
 .err{color:var(--crit);font:11px var(--mono);margin-top:6px}
 .tab .pk{display:inline-block;background:var(--accent);color:#fff;border-radius:8px;
   padding:1px 5px;margin-left:6px;font-size:9px}
@@ -145,7 +184,8 @@ h2 .n{color:var(--accent)}
       letter-spacing:0">— all factories</span></h2>
       <div class="card" id="decisions"></div></div>
     <div><h2>Tokens</h2><div class="card" id="tokens"></div></div>
-    <div><h2>Backlog</h2><div class="card" id="backlog"></div></div>
+    <div><h2>Ready work <span class="n" id="rn"></span></h2>
+      <div class="card" id="backlog"></div></div>
   </div>
 </main>
 <div class="foot">
@@ -233,8 +273,10 @@ function render(){
   if(parked.length){
     bar.hidden = false;
     bar.innerHTML = `<b>${parked.length} waiting on you</b>` + parked.map(t=>
-      `<button class="chip" data-jump="${t.token}" data-fac="${t.factory}">
-        ${t.factory} · ${t.token}<span class="age"> — ${ago(t.waiting_since)}</span>
+      `<button class="chip" data-jump="${t.token}" data-fac="${t.factory}"
+         title="${t.issue ? t.issue.title : t.token}">
+        ${t.factory} · ${t.token}${t.issue ? ' — ' + t.issue.title.slice(0,44) : ''}
+        <span class="age"> · ${ago(t.waiting_since)}</span>
       </button>`).join('');
     bar.querySelectorAll('.chip').forEach(b=>b.onclick=()=>{
       FACTORY=b.dataset.fac; SELTOK=b.dataset.jump; SEL=null; render();
@@ -267,8 +309,20 @@ function drawGraph(g, f){
   const toks = S.tokens.filter(t=>t.factory===FACTORY);
   const here = new Map();
   toks.forEach(t => here.set(t.node, (here.get(t.node)||[]).concat(t.token)));
-  const path = SELTOK ? new Set(S.transitions.filter(x=>x.token===SELTOK)
-                                 .flatMap(x=>[x.from,x.edge,x.to].filter(Boolean))) : null;
+
+  /* The full history drawn over the graph is structure, not information — every
+     token eventually touches most of it. What is worth seeing is the last hop:
+     where this token is now, and where it just came from. Everything else fades
+     to context. */
+  let NOW = null, CAME = null, STEP = null;
+  if(SELTOK){
+    const tk = S.tokens.find(x=>x.token===SELTOK);
+    const hist = S.transitions.filter(x=>x.token===SELTOK);
+    const last = hist[hist.length-1];
+    NOW = tk ? tk.node : (last ? last.to : null);
+    CAME = last ? last.from : null;
+    STEP = last ? (last.edge || null) : null;
+  }
 
   const cols = {};
   [...g.V.values()].forEach(v => (cols[v.depth] = cols[v.depth]||[]).push(v));
@@ -285,15 +339,17 @@ function drawGraph(g, f){
   const arc = a=>{
     const s=pos.get(a.from), t=pos.get(a.to); if(!s||!t) return '';
     const x1=s.x+s.w, y1=s.y+s.h/2, x2=t.x, y2=t.y+t.h/2;
-    const hot = path && path.has(a.from) && path.has(a.to);
-    const dim = path && !hot;
+    const hot = SELTOK && ((a.from===CAME && a.to===NOW) ||
+                           (STEP && (a.from===CAME && a.to===STEP)) ||
+                           (STEP && (a.from===STEP && a.to===NOW)));
+    const dim = SELTOK && !hot;
     if(x2<=x1){ // a loop back to an earlier column
       const my=Math.max(y1,y2)+30;
-      return `<path class="lnk ${hot?'hot':''} ${dim?'dim':''}"
+      return `<path class="lnk ${hot?'hop':''} ${dim?'ghost':''}"
         d="M${x1},${y1} C${x1+30},${my} ${x2-30},${my} ${x2},${y2}"/>`;
     }
     const mx=(x1+x2)/2;
-    return `<path class="lnk ${hot?'hot':''} ${dim?'dim':''}"
+    return `<path class="lnk ${hot?'hop':''} ${dim?'ghost':''}"
       d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
   };
 
@@ -301,8 +357,13 @@ function drawGraph(g, f){
     const p=pos.get(v.id); if(!p) return '';
     const occ = here.has(v.id);
     const isHuman = v.kind==='human' || g.hb.has(v.id);
+    const isNow  = SELTOK && v.id===NOW;
+    const isCame = SELTOK && (v.id===CAME || v.id===STEP) && !isNow;
     const cls = [ 'vtx', v.kind==='node'?'agent':v.kind,
-                  isHuman?'human':'', occ?'occupied':'', SEL===v.id?'sel':'' ].join(' ');
+                  isHuman?'human':'', occ&&!SELTOK?'occupied':'',
+                  isNow?'now':'', isCame?'came':'',
+                  SELTOK && !isNow && !isCame ? 'faded':'',
+                  SEL===v.id?'sel':'' ].join(' ');
     const sub = v.kind==='node' ? 'NODE' : v.kind==='edge' ? (g.hb.has(v.id)?'EDGE · YOU GATE IT':'EDGE')
               : v.kind==='human' ? 'HUMAN' : 'TERMINAL';
     const n = occ ? ` (${here.get(v.id).length})` : '';
@@ -310,7 +371,8 @@ function drawGraph(g, f){
       aria-label="${v.id}, ${sub.toLowerCase()}${occ?', token here':''}">
       <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="2"/>
       <text class="lbl" x="${p.x+9}" y="${p.y+15}">${v.id}${n}</text>
-      <text class="sub" x="${p.x+9}" y="${p.y+27}">${sub}</text></g>`;
+      <text class="sub" x="${p.x+9}" y="${p.y+27}">${sub}</text>${
+        isNow ? `<text class="nowtag" x="${p.x+p.w-30}" y="${p.y+27}">NOW</text>` : ''}</g>`;
   };
 
   $('#graph').innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMinYMin meet">
@@ -336,8 +398,15 @@ function drawTokens(){
      <code>bin/cp-run ${FACTORY} &lt;issue&gt; --dry-run</code></div>`; return; }
   $('#tokens').innerHTML = `<table><tbody>${t.map(x=>`
     <tr class="click" data-t="${x.token}" tabindex="0">
-      <td class="k">${x.token}</td><td>${x.node}</td>
-      <td style="text-align:right"><span class="badge ${x.status}">${x.status}</span></td>
+      <td>
+        <div class="k">${x.token}</div>
+        <div class="ttl">${x.issue ? x.issue.title.slice(0,64)
+          : '<i style="color:var(--ink3)">not a tracked issue</i>'}</div>
+        <div class="ctx" style="margin-top:2px">at ${x.node}${
+          x.status==='parked' ? ' · waiting '+ago(x.waiting_since) : ''}</div>
+      </td>
+      <td style="text-align:right;vertical-align:top">
+        <span class="badge ${x.status}">${x.status}</span></td>
     </tr>`).join('')}</tbody></table>`;
   $('#tokens').querySelectorAll('tr').forEach(r=>{
     const pick = () => { SELTOK = SELTOK===r.dataset.t ? null : r.dataset.t; SEL=null; render(); };
@@ -383,8 +452,10 @@ function drawDecisions(){
   parked.sort((a,b)=>a.factory.localeCompare(b.factory));
   $('#decisions').innerHTML = parked.map(t=>`
     <div class="q" style="margin-bottom:10px" data-token="${t.token}">
-      <div class="ctx" style="margin:0 0 4px">${t.factory} · ${t.token}
+      <div class="ctx" style="margin:0 0 2px">${t.factory} · ${t.token}
         · waiting ${ago(t.waiting_since)}</div>
+      ${t.issue ? `<div style="font-size:12px;color:var(--ink2);margin:0 0 8px;
+        line-height:1.4">${t.issue.title}</div>` : ''}
       <div class="asks">${t.question.asks}</div>
       ${(t.question.options||[]).map(o=>
         `<div class="opt"><b>${o.value}</b><span>${o.means}</span></div>`).join('')}
@@ -401,54 +472,152 @@ function drawDecisions(){
     b.onclick = () => answer(b.dataset.t, b.dataset.v, b));
 }
 
+async function dispatch(factory, token, btn){
+  const scen = document.querySelector('#scen')?.value || 'happy';
+  btn.disabled = true; const was = btn.textContent; btn.textContent = '…';
+  try{
+    const r = await fetch('/api/dispatch',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({factory, token, scenario: scen})});
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error || ('HTTP '+r.status));
+    SELTOK = token; await poll();
+  }catch(e){
+    const p = document.createElement('div');
+    p.className='err'; p.textContent = e.message;
+    btn.closest('.card').appendChild(p);
+    btn.disabled=false; btn.textContent = was;
+  }
+}
+
 function drawBacklog(f){
-  if(!f.backlog){ $('#backlog').innerHTML =
-    `<div class="empty">${f.name} has no beads backlog. Its work is not dispatchable yet.</div>`;
+  if(!f.backlog){
+    $('#rn').textContent='';
+    $('#backlog').innerHTML =
+      `<div class="empty">${f.name} has no beads backlog, so it has no dispatchable
+       work. That is what a backlog is for here — a token is an issue with
+       acceptance criteria.</div>`;
     return; }
   const w=f.work;
-  const rows=[['ready',w.ready_known?w.ready:'?'],['in progress',w.wip],
-              ['waiting',w.waiting],['closed',w.done]];
-  $('#backlog').innerHTML = `<table><tbody>${rows.map(([k,v])=>
-    `<tr><td class="k">${k}</td><td style="text-align:right">${v}</td></tr>`).join('')}
-    </tbody></table>`;
+  const live = new Set(S.tokens.filter(t=>t.status!=='done').map(t=>t.token));
+  const ready = (f.issues||[]).filter(i=>i.bucket==='ready')
+                  .sort((a,b)=>(a.priority??9)-(b.priority??9));
+  $('#rn').textContent = w.ready_known ? w.ready : '?';
+
+  const scens = (S.scenarios||[]).map(x=>
+    `<option value="${x}"${x==='happy'?' selected':''}>${x}</option>`).join('');
+
+  $('#backlog').innerHTML = `
+    <table><tbody>
+      <tr><td class="k">in progress</td><td style="text-align:right">${w.wip}</td></tr>
+      <tr><td class="k">waiting</td><td style="text-align:right">${w.waiting}</td></tr>
+      <tr><td class="k">closed</td><td style="text-align:right">${w.done}</td></tr>
+    </tbody></table>
+    <div class="runbar" style="margin-top:10px">
+      <label for="scen">dry run</label>
+      <select id="scen" title="Which recorded set of node results to walk with">${scens}</select>
+    </div>
+    <div class="ctx">Live agents are refused until the isolation contract lands, so
+      dispatch walks the graph against recorded results.</div>
+    <div class="ready">${ready.slice(0,10).map(i=>`
+      <div class="row">
+        <div><div class="id">${i.id}</div><div class="ttl">${i.title.slice(0,70)}</div></div>
+        <button class="go" data-f="${f.name}" data-t="${i.id}"
+          ${live.has(i.id)?'disabled title="already in the graph"':''}>run</button>
+      </div>`).join('')}</div>
+    ${ready.length>10?`<div class="ctx" style="margin-top:6px">… ${ready.length-10} more —
+      <code>bin/cp work ${f.name}</code></div>`:''}
+    ${!ready.length?'<div class="empty" style="margin-top:8px">Nothing is ready here.</div>':''}`;
+
+  $('#backlog').querySelectorAll('.go').forEach(b=>
+    b.onclick = () => dispatch(b.dataset.f, b.dataset.t, b));
 }
 
 function drawDetail(g){
   const T = S.transitions.filter(x => x.factory === FACTORY);
+
   if(SELTOK){
-    const rows = T.filter(x=>x.token===SELTOK);
-    $('#dtitle').innerHTML = `Path of <span style="color:var(--accent)">${SELTOK}</span>`;
-    $('#detail').innerHTML = `<table><thead><tr><th>when</th><th>from</th><th>verdict</th>
-      <th>edge</th><th>exit</th><th>to</th><th>ms</th><th>why</th></tr></thead><tbody>
-      ${rows.map(r=>`<tr><td>${r.ts.slice(11,19)}</td><td class="k">${r.from}</td>
-        <td>${r.verdict??'—'}</td><td>${r.edge??'—'}</td><td>${r.exit??'—'}</td>
-        <td class="k">${r.to}</td><td style="text-align:right">${r.ms??''}</td>
-        <td>${r.why??(r.actor==='human'?'you answered':'')}</td></tr>`).join('')}
-      </tbody></table>
-      <div class="ctx" style="margin-top:8px">This is the whole provenance record.
-      Why it landed is a path, not a transcript.</div>`;
+    const tk = S.tokens.find(x=>x.token===SELTOK);
+    // Only this run. Earlier runs stay in the log but are a different journey,
+    // and splicing them together reads as one long path that never happened.
+    const run = tk ? (tk.run || 1) : null;
+    const all = T.filter(x=>x.token===SELTOK);
+    const rows = run ? all.filter(x=>(x.run||1)===run) : all;
+    const earlier = all.length - rows.length;
+    $('#dtitle').innerHTML = `Journey of <span style="color:var(--accent)">${SELTOK}</span>` +
+      (tk && tk.issue ? `<span style="text-transform:none;letter-spacing:0;color:var(--ink3);
+        font-family:var(--sans);font-weight:400"> — ${tk.issue.title}</span>` : '');
+
+    /* The journey reads as a list. A path traced over the graph looks like
+       information and is mostly geometry — the order things happened in is the
+       part you actually want to read. */
+    const steps = rows.map((r,i)=>{
+      const what = r.actor === 'human'
+        ? `<b>you answered ${r.verdict}</b> <i>(${r.via||'cli'})</i>`
+        : r.verdict
+          ? `verdict <b>${r.verdict}</b>${r.edge?` <i>· ran ${r.edge}, exit ${r.exit}</i>`:''}`
+          : r.edge
+            ? `ran <b>${r.edge}</b> <i>· exit ${r.exit}</i>`
+            : `<i>${r.why || 'moved'}</i>`;
+      return `<div class="step">
+        <div class="n">${i+1}</div>
+        <div class="at">${r.from}</div>
+        <div class="what">${what}${r.why && r.actor!=='human'
+          ? ` <i>— ${r.why}</i>` : ''} → <b>${r.to}</b></div>
+        <div class="ms">${r.ms ? r.ms+'ms' : ''}</div></div>`;
+    }).join('');
+
+    const status = tk ? tk.status : 'done';
+    const tail = `<div class="step here">
+      <div class="n">▸</div>
+      <div class="at">${tk ? tk.node : '—'}</div>
+      <div class="what">${
+        status==='parked' ? `waiting on you <i>· ${ago(tk.waiting_since)}</i>`
+        : status==='done' ? 'finished' : 'running'}<span class="here-tag">NOW</span></div>
+      <div class="ms"></div></div>`;
+
+    $('#detail').innerHTML = `<div class="journey">${steps}${tail}</div>
+      <div class="ctx" style="margin-top:10px">${rows.length} crossing${
+        rows.length===1?'':'s'}${run>1?` · run ${run}`:''}${earlier
+        ? ` · ${earlier} more from earlier run${earlier===1?'':'s'}`:''}. This is the
+        whole provenance record — why it landed is a path, not a transcript.</div>`;
     return;
   }
+
   if(SEL){
     const rows = T.filter(x=>x.from===SEL || x.edge===SEL || x.to===SEL);
     $('#dtitle').innerHTML = `<span style="color:var(--accent)">${SEL}</span> — every crossing`;
-    $('#detail').innerHTML = rows.length ? `<table><thead><tr><th>when</th><th>token</th>
-      <th>from</th><th>verdict</th><th>edge</th><th>exit</th><th>to</th></tr></thead><tbody>
-      ${rows.map(r=>`<tr><td>${r.ts.slice(11,19)}</td><td class="k">${r.token}</td>
-        <td>${r.from}</td><td>${r.verdict??'—'}</td><td>${r.edge??'—'}</td>
-        <td>${r.exit??'—'}</td><td>${r.to}</td></tr>`).join('')}</tbody></table>`
+    $('#detail').innerHTML = rows.length ? `<div class="journey">${rows.map((r,i)=>`
+      <div class="step">
+        <div class="n">${i+1}</div>
+        <div class="at">${r.token}</div>
+        <div class="what">${r.from} ${r.verdict?`<b>${r.verdict}</b> `:''}${
+          r.edge?`<i>via ${r.edge}${r.exit!==null&&r.exit!==undefined?', exit '+r.exit:''}</i> `:''}
+          → <b>${r.to}</b></div>
+        <div class="ms">${r.ts.slice(11,19)}</div></div>`).join('')}</div>`
       : `<div class="empty"><b>${SEL}</b> has never been crossed.</div>`;
     return;
   }
-  $('#dtitle').textContent = 'Recent crossings';
-  const recent = T.slice(-14).reverse();
-  $('#detail').innerHTML = recent.length ? `<table><thead><tr><th>when</th><th>token</th>
-    <th>from</th><th>verdict</th><th>edge</th><th>exit</th><th>to</th></tr></thead><tbody>
-    ${recent.map(r=>`<tr><td>${r.ts.slice(11,19)}</td><td class="k">${r.token}</td>
-      <td>${r.from}</td><td>${r.verdict??'—'}</td><td>${r.edge??'—'}</td>
-      <td>${r.exit??'—'}</td><td>${r.to}</td></tr>`).join('')}</tbody></table>`
-    : `<div class="empty">No edge has ever been crossed. Click a node or an edge to
-       see its history once there is one.</div>`;
+
+  $('#dtitle').textContent = 'In flight';
+  const live = S.tokens.filter(t=>t.factory===FACTORY);
+  if(!live.length){
+    $('#detail').innerHTML = `<div class="empty">Nothing has entered this graph.
+      Dispatch ready work from the panel on the right.</div>`;
+    return;
+  }
+  $('#detail').innerHTML = `<div class="journey">${live.map(t=>{
+    const h = T.filter(x=>x.token===t.token);
+    const last = h[h.length-1];
+    return `<div class="step ${t.status==='parked'?'here':''}">
+      <div class="n">${t.status==='parked'?'▸':''}</div>
+      <div class="at">${t.token}</div>
+      <div class="what">${t.issue?t.issue.title.slice(0,52)+' · ':''}at <b>${t.node}</b>${
+        last?` <i>· came from ${last.from}</i>`:''}${
+        t.status==='parked'?` <i>· waiting ${ago(t.waiting_since)}</i>`:''}</div>
+      <div class="ms">${h.length} step${h.length===1?'':'s'}</div></div>`;
+  }).join('')}</div>
+  <div class="ctx" style="margin-top:10px">Click a token to read its journey.</div>`;
 }
 
 poll();

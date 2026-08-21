@@ -142,6 +142,63 @@ class AnswerEndpoint(unittest.TestCase):
         self.assertEqual(body["status"], "parked")
         self.assertEqual(post(self.port, {"token": "s-hold", "value": "yes"})[0], 200)
 
+    def a_ready_issue(self):
+        st = json.loads(urllib.request.urlopen(
+            f"http://127.0.0.1:{self.port}/api/state", timeout=30).read())
+        for f in st["factories"]:
+            for i in f.get("issues", []):
+                if i["bucket"] == "ready":
+                    return f["name"], i["id"]
+        self.skipTest("no ready work to dispatch")
+
+    def test_dispatching_ready_work_puts_it_in_the_graph(self):
+        factory, tid = self.a_ready_issue()
+        try:
+            code, body = post(self.port, {"factory": factory, "token": tid,
+                                          "scenario": "happy"}, "/api/dispatch")
+            self.assertEqual(code, 200, body)
+            self.assertEqual(body["token"], tid)
+            self.assertIn(body["status"], ("done", "parked"))
+        finally:
+            (STATE / "tokens" / f"{tid}.json").unlink(missing_ok=True)
+
+    def test_only_work_the_tracker_calls_ready_can_be_dispatched(self):
+        """Otherwise the endpoint is a way to create arbitrary state files from a
+        browser, and the graph fills with tokens for work nobody agreed exists."""
+        for bad in ("not-an-issue-at-all", "cp-execution-graph-yt9", "../../x"):
+            code, body = post(self.port, {"factory": "control-plane", "token": bad},
+                              "/api/dispatch")
+            self.assertEqual(code, 400, f"{bad!r} was accepted: {body}")
+
+    def test_unknown_factory_is_refused(self):
+        code, _ = post(self.port, {"factory": "not-real", "token": "x"}, "/api/dispatch")
+        self.assertEqual(code, 400)
+
+    def test_a_scenario_that_does_not_exist_is_refused(self):
+        factory, tid = self.a_ready_issue()
+        code, _ = post(self.port, {"factory": factory, "token": tid,
+                                   "scenario": "nope"}, "/api/dispatch")
+        self.assertEqual(code, 400)
+
+    def test_path_traversal_in_the_scenario_is_refused(self):
+        factory, tid = self.a_ready_issue()
+        for bad in ("../../../etc/passwd", "../graph", "a/b"):
+            code, _ = post(self.port, {"factory": factory, "token": tid,
+                                       "scenario": bad}, "/api/dispatch")
+            self.assertEqual(code, 400, f"{bad!r} was accepted")
+
+    def test_a_token_already_in_flight_is_not_dispatched_twice(self):
+        factory, tid = self.a_ready_issue()
+        try:
+            post(self.port, {"factory": factory, "token": tid,
+                             "scenario": "charter"}, "/api/dispatch")
+            code, body = post(self.port, {"factory": factory, "token": tid},
+                              "/api/dispatch")
+            self.assertEqual(code, 409, body)
+            self.assertIn("already", body["error"])
+        finally:
+            (STATE / "tokens" / f"{tid}.json").unlink(missing_ok=True)
+
     def test_unknown_post_paths_are_404(self):
         self.assertEqual(post(self.port, {}, path="/api/anything")[0], 404)
 

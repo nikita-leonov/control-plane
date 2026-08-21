@@ -46,9 +46,11 @@ def now():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def record(rec):
+def record(rec, tok=None):
     """Append before the next crossing starts. The log is the provenance graph;
     if it lags the runner it stops being evidence."""
+    if tok is not None:
+        rec.setdefault("run", tok.get("run", 1))
     STATE.mkdir(exist_ok=True)
     with open(LOG, "a") as f:
         f.write(json.dumps(rec) + "\n")
@@ -164,7 +166,7 @@ def advance(tok, graph, types, args):
 
         if rule.get("parks"):
             record({"ts": now(), "token": tok["token"], "factory": factory, "from": pos,
-                    "verdict": verdict, "edge": None, "exit": None, "to": "@park", "ms": 0})
+                    "verdict": verdict, "edge": None, "exit": None, "to": "@park", "ms": 0}, tok)
             tok.update(status="parked", node="@park",
                        question=env.get("question"), parked_from=pos)
             return save(tok)
@@ -188,7 +190,7 @@ def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
             and not tok.pop("human_cleared_" + edge_name, None):
         record({"ts": now(), "token": tok["token"], "factory": factory, "from": edge_name,
                 "verdict": verdict, "edge": None, "exit": None, "to": "@park",
-                "ms": 0, "why": f"human_before {edge_name}"})
+                "ms": 0, "why": f"human_before {edge_name}"}, tok)
         tok.update(status="parked", node="@park", parked_from=from_node, question={
             "asks": f"{tok['token']} is green and reviewed. Cross `{edge_name}`?",
             "options": [
@@ -204,7 +206,7 @@ def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
             # Exhaustion is an edge to a human node, not an exception.
             record({"ts": now(), "token": tok["token"], "factory": factory, "from": edge_name,
                     "verdict": verdict, "edge": edge_name, "exit": None, "to": "@park",
-                    "ms": 0, "why": f"budget {budget} exhausted"})
+                    "ms": 0, "why": f"budget {budget} exhausted"}, tok)
             tok["status"] = "parked"
             tok["node"] = "@park"
             tok["question"] = {
@@ -223,7 +225,7 @@ def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
         # would have improvised past the gap and hidden it.
         record({"ts": now(), "token": tok["token"], "factory": factory, "from": edge_name,
                 "verdict": verdict, "edge": edge_name, "exit": rc, "to": "@park", "ms": ms,
-                "why": f"no route for exit {rc}"})
+                "why": f"no route for exit {rc}"}, tok)
         tok["status"] = "parked"
         tok["node"] = "@park"
         tok["question"] = {
@@ -236,7 +238,7 @@ def do_edge(tok, edge_name, graph, factory, args, from_node, verdict):
         return rc, ms
 
     record({"ts": now(), "token": tok["token"], "factory": factory, "from": from_node,
-            "verdict": verdict, "edge": edge_name, "exit": rc, "to": to, "ms": ms})
+            "verdict": verdict, "edge": edge_name, "exit": rc, "to": to, "ms": ms}, tok)
     tok["prev_vertex"] = edge_name
     tok["node"] = to
     save(tok)
@@ -277,7 +279,7 @@ def main():
         chosen = opts[a.answer]
         record({"ts": now(), "token": tok["token"], "factory": tok["factory"], "from": "@park",
                 "verdict": a.answer, "edge": None, "exit": None,
-                "to": chosen["edge"], "ms": 0, "actor": "human", "via": a.via})
+                "to": chosen["edge"], "ms": 0, "actor": "human", "via": a.via}, tok)
         if chosen["edge"] == "@park":
             return 0
         tok["status"] = "running"
@@ -298,8 +300,16 @@ def main():
     if a.factory not in graph["factories"]:
         die(f"{a.factory!r} is not a factory in graph.json", 2)
 
+    prev = TOKENS / f"{a.token}.json"
+    run_no = 1
+    if prev.exists():
+        try:
+            run_no = int(json.loads(prev.read_text()).get("run", 1)) + 1
+        except Exception:                                  # noqa: BLE001
+            pass
+
     tok = {"token": a.token, "factory": a.factory, "node": graph["entry"],
-           "status": "running", "attempts": {}, "seen": {},
+           "status": "running", "attempts": {}, "seen": {}, "run": run_no,
            "started": now(), "updated": now(), "dry_run": a.dry_run,
            "scenario": a.scenario if a.dry_run else None}
     save(tok)
