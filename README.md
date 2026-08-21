@@ -72,9 +72,28 @@ which nodes on its path are human-occupied.
 ## The backlog
 
 `.beads/` holds the program backlog — the operating model across all four repos.
-Feature work for a factory lives in that factory's own tracker. The line: if it
-changes how work moves, it belongs here; if it changes what the product does, it
-belongs there.
+Feature work for a factory lives in that factory's own tracker. The line: **if it
+changes how work moves, it belongs here; if it changes what a product does, it
+belongs there.** Infrastructure yes, features no.
+
+That line was written down and eroded anyway, so it is a check now
+(`tools/check-backlog-scope.py`, in the gate). The tell is mechanical: an issue
+that names paths which exist inside a factory and not here is an issue about that
+factory's insides. Two escape hatches, both deliberately visible:
+
+- **`cross-factory`** — infrastructure that genuinely has to name a factory's
+  insides to describe itself, like standing a tracker up inside one. It is a
+  claim made in the backlog where it can be read, not a rule buried in the
+  checker.
+- **`moves-to-<factory>`** — an acknowledged violation with nowhere to go yet,
+  because that factory has no tracker. It is **self-expiring**: the day the
+  tracker exists the gate goes red until the issue is moved. A permanent
+  exemption is the rule deleted slowly.
+
+Three faceoff-finder issues are queued that way today — the golden set (games and
+harness) and the lint-ratchet identity bug, whose `tools/lint_ratchet.py` lives
+in faceoff-finder. They are blocked on `cp-beads-faceoff-finder-z7l` so they
+cannot be worked here in the meantime.
 
 ```
 br ready                 what could be started now

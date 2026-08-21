@@ -107,6 +107,11 @@ check "edges"       fast python3 tools/check-edges.py
 # GRAPH.md promises that nothing is described without an issue behind it. That
 # rule was enforced by hand until it became this.
 check "issue refs"  full python3 tools/check-issue-refs.py
+
+# This backlog is about how work moves, not about what a product does. The rule
+# was written in README.md and then quietly eroded, because a factory with no
+# tracker of its own leaves its work nowhere else to go.
+check "backlog scope" full python3 tools/check-backlog-scope.py
 # ------------------------------------------------------------ END CHECKS ----
 
 ELAPSED=$(( $(date +%s) - STARTED ))
