@@ -61,11 +61,12 @@ br blocked               what is waiting, and on what
 ```
 
 Durability: `origin` is `github.com/nikita-leonov/control-plane`, for storage
-only — nothing is validated remotely. `~/git-mirrors/sync` mirrors the factory
-repos onto the NVMe root disk, away from the `sda1` that `/mnt/projects` lives
-on, and reports uncommitted files explicitly because those are exactly what a
-mirror does not protect. control-plane is not in that set yet
-(`cp-mirror-control-plane-2xz`).
+only — nothing is validated remotely. `~/git-mirrors/sync` mirrors all four repos
+onto the NVMe root disk, away from the `sda1` that `/mnt/projects` lives on, and
+reports uncommitted files explicitly because those are exactly what a mirror does
+not protect. Three of the four also have GitHub remotes; finance-c-and-c has only
+the mirror, on purpose — it carries real positions and tax lots, and pushing
+those to a third party is a decision rather than a default.
 
 The rule that keeps this a CEO tool rather than another inbox: **it surfaces
 decisions, never diffs.** The decision queue is the set of tokens parked on human
